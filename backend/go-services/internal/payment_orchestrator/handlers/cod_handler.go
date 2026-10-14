@@ -209,7 +209,7 @@ func (h *CODHandler) PayNow(c *gin.Context) {
 	}
 	returnURL := os.Getenv("PUBLIC_BASE_URL")
 	if returnURL == "" {
-		returnURL = "https://omnigo-app-3-production.up.railway.app"
+		returnURL = "https://omnigo-app-4-production.up.railway.app"
 	}
 	returnURL += "/api/v1/payments/cod/settlement"
 

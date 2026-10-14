@@ -335,7 +335,7 @@ func TestLiveGatewayAPI_CustomerValidation(t *testing.T) {
 			ExpiryYear:           testCardExpiryY,
 			CVV:                  testCardCVV,
 			Data3DSPagemode:      "true",
-			Data3DSCallbackURL:   "https://omnigo-app-3-production.up.railway.app/api/v1/payments/payfast/3ds_callback",
+			Data3DSCallbackURL:   "https://omnigo-app-4-production.up.railway.app/api/v1/payments/payfast/3ds_callback",
 		}
 
 		res, err := client.ValidateCustomerPayment(ctx, req)
@@ -377,7 +377,7 @@ func TestLiveGatewayAPI_TemporaryToken(t *testing.T) {
 			ExpiryYear:       testCardExpiryY,
 			CVV:              testCardCVV,
 			Data3DSPagemode:    "true",
-			Data3DSCallbackURL: "https://omnigo-app-3-production.up.railway.app/api/v1/payments/payfast/3ds_callback",
+			Data3DSCallbackURL: "https://omnigo-app-4-production.up.railway.app/api/v1/payments/payfast/3ds_callback",
 		}
 
 		res, err := client.GetTemporaryTransactionToken(ctx, req)
@@ -469,7 +469,7 @@ func TestHostedCheckout_FormURL(t *testing.T) {
 	}
 
 	basketID := fmt.Sprintf("PFHOST%d", time.Now().UnixNano())
-	returnURL := "https://omnigo-app-3-production.up.railway.app/api/v1/wallet/callback"
+	returnURL := "https://omnigo-app-4-production.up.railway.app/api/v1/wallet/callback"
 
 	formURL := fmt.Sprintf(
 		"%s/PostTransaction?merchant_id=%s&basket_id=%s&txnamt=%.2f&currency_code=PKR&customer_mobile_no=%s&customer_email_address=%s&success_url=%s&checkout_url=%s",
@@ -945,7 +945,7 @@ func TestFullFlowSimulation_OptionC(t *testing.T) {
 		ExpiryYear:       testCardExpiryY,
 		CVV:              testCardCVV,
 		Data3DSPagemode:    "true",
-		Data3DSCallbackURL: "https://omnigo-app-3-production.up.railway.app/api/v1/payments/payfast/3ds_callback",
+		Data3DSCallbackURL: "https://omnigo-app-4-production.up.railway.app/api/v1/payments/payfast/3ds_callback",
 	}
 
 	tempTokenRes, err := client.GetTemporaryTransactionToken(ctx, tempTokenReq)

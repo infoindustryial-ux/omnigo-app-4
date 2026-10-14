@@ -218,7 +218,7 @@ PAYFAST_BASE_URL=https://ipguat.apps.net.pk/Ecommerce/api/Transaction
 PAYFAST_HASH_KEY=           # Optional - falls back to SECURED_KEY
 PAYFAST_GATEWAY_TIMEOUT_SECONDS=20
 PAYFAST_LEGACY_SUNSET_DATE= # RFC 7231 format, or rolling 1-year
-PAYFAST_WEB_ORIGIN=https://omnigo-app-3-production.up.railway.app
+PAYFAST_WEB_ORIGIN=https://omnigo-app-4-production.up.railway.app
 ```
 
 ### URL Endpoints

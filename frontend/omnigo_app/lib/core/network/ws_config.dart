@@ -1,7 +1,7 @@
 /// WebSocket host resolution — aligned with the API Gateway architecture.
 ///
 /// Flutter talks to ONE public URL only. WebSocket also goes through the
-/// gateway (wss://omnigo-app-3-production.up.railway.app/ws).
+/// gateway (wss://omnigo-app-4-production.up.railway.app/ws).
 ///
 /// For local dev, override with --dart-define=WS_HOST=10.0.2.2
 library;
@@ -37,10 +37,10 @@ String resolveWsHost() {
   if (apiHost.isNotEmpty) return apiHost;
 
   // Production Railway Domain
-  return 'omnigo-app-3-production.up.railway.app';
+  return 'omnigo-app-4-production.up.railway.app';
 }
 
-/// In production: wss://omnigo-app-3-production.up.railway.app/ws (TLS, port 443)
+/// In production: wss://omnigo-app-4-production.up.railway.app/ws (TLS, port 443)
 String wsBaseUrl(String host) {
   if (host.startsWith('wss://') || host.startsWith('ws://')) {
     return host;

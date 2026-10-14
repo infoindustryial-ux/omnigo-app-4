@@ -6,7 +6,7 @@
 /// are private and only reachable through the gateway via Railway private
 /// networking. Flutter never knows about individual service ports.
 ///
-///   Flutter  →  https://omnigo-app-3-production.up.railway.app  →  Gateway  →  internal services
+///   Flutter  →  https://omnigo-app-4-production.up.railway.app  →  Gateway  →  internal services
 ///
 /// Override via `--dart-define=API_HOST=10.0.2.2` for local dev (gateway on :8000).
 class ApiEndpoints {
@@ -14,7 +14,7 @@ class ApiEndpoints {
 
   // ── Host Resolution (Railway Production) ────────────────────────
   // Override via --dart-define=API_HOST=staging.example.com for staging/dev
-  static const String _productionDomain = 'omnigo-app-3-production.up.railway.app';
+  static const String _productionDomain = 'omnigo-app-4-production.up.railway.app';
   static final String _host = _resolveHost();
 
   static String _resolveHost() {

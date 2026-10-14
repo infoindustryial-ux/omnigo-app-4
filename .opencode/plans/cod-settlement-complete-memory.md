@@ -3,7 +3,7 @@
 ## Project Overview
 - **Platform**: OMNIGO Super App (Go microservices + Flutter frontend)
 - **Backend**: `/home/arise/Downloads/OMNIGO-APP-2-main/backend/go-services`
-- **Railway URL**: `https://omnigo-app-3-production.up.railway.app`
+- **Railway URL**: `https://omnigo-app-4-production.up.railway.app`
 - **Admin**: `admin@omnigo.pk` / `Omn!go@YSeoWRg5UwYB` (role: admin)
 - **Test Vendor**: `VEND-28bdd793`, **Test Store**: `STOR-9c02385a`
 - **Services**: 15 Go services compiled with `CGO_ENABLED=1`, monolith spawns children at `/app/bin/<name>`

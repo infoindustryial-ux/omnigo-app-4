@@ -854,7 +854,7 @@ Complete full PayFast code audit - backend (Go) + frontend (Flutter) - to unders
 PAYFAST_MERCHANT_ID=102 (UAT)
 PAYFAST_SECURED_KEY=zWHjBp2AlttNu1sK
 PAYFAST_BASE_URL=https://ipguat.apps.net.pk/Ecommerce/api/Transaction (UAT)
-PAYFAST_WEB_ORIGIN=https://omnigo-app-3-production.up.railway.app
+PAYFAST_WEB_ORIGIN=https://omnigo-app-4-production.up.railway.app
 ```
 
 **⚠️ Production URL**: Should be `ipg1.apps.net.pk`

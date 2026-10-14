@@ -745,7 +745,7 @@ func (h *WalletHandler) LoadCustomerWallet(c *gin.Context) {
 		// auto-submit HTML form with all PayFast-required params (TOKEN, SIGNATURE, etc.)
 		publicBase := strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL"))
 		if publicBase == "" {
-			publicBase = "https://omnigo-app-3-production.up.railway.app"
+			publicBase = "https://omnigo-app-4-production.up.railway.app"
 		}
 		hostedURL := fmt.Sprintf("%s/api/v1/wallet/payfast/form/%s?amount=%.2f&return_url=%s",
 			publicBase,

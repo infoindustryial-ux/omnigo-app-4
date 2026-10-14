@@ -379,7 +379,7 @@ cd backend/go-services
 ./build_all.sh
 
 # Test the new endpoint
-curl -X POST https://omnigo-app-3-production.up.railway.app/api/v1/payments/cod/card-payment \
+curl -X POST https://omnigo-app-4-production.up.railway.app/api/v1/payments/cod/card-payment \
   -H "Authorization: Bearer <rider_jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{

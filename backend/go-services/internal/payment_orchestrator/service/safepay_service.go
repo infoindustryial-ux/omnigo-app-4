@@ -48,7 +48,7 @@ func NewSafepayService(
 
 	publicBase := strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/")
 	if publicBase == "" {
-		publicBase = "https://omnigo-app-3-production.up.railway.app"
+		publicBase = "https://omnigo-app-4-production.up.railway.app"
 	}
 	cbURL := os.Getenv("SAFEPAY_3DS_CALLBACK_URL")
 	if cbURL == "" {

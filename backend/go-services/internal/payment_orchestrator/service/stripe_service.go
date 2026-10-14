@@ -56,7 +56,7 @@ func NewStripeService(
 ) *StripeService {
 	publicBase := strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/")
 	if publicBase == "" {
-		publicBase = "https://omnigo-app-3-production.up.railway.app"
+		publicBase = "https://omnigo-app-4-production.up.railway.app"
 	}
 	return &StripeService{
 		db:              db,

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/di/service_locator.dart';
 import '../../../../core/theme/app_theme.dart';
 
@@ -197,7 +198,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
   }
 
   void _showDocumentViewer(String url, String title) {
-    final fullUrl = url.startsWith('http') ? url : 'https://omnigo-app-3-production.up.railway.app$url';
+    final fullUrl = url.startsWith('http') ? url : '${ApiEndpoints.gatewayBase}$url';
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
