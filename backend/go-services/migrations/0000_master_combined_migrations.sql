@@ -302,6 +302,9 @@ CREATE TABLE IF NOT EXISTS cod_debts (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     settled_at      TIMESTAMPTZ
 );
+ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS amount_paisa BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE escrow_holds ADD COLUMN IF NOT EXISTS amount_paisa BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE cod_debts ADD COLUMN IF NOT EXISTS amount_paisa BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_cod_debts_rider ON cod_debts(rider_tracking_id);
 
 -- ── Disputes ────────────────────────────────────────────────────
