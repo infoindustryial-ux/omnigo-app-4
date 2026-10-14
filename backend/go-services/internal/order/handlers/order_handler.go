@@ -60,6 +60,13 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 			})
 			return
 		}
+		if strings.Contains(err.Error(), "PRODUCT_LOOKUP_FAILED") || strings.Contains(err.Error(), "failed to fetch product") {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error":   "PRODUCT_NOT_FOUND",
+				"message": err.Error(),
+			})
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

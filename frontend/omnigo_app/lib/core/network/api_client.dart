@@ -39,10 +39,13 @@ class ApiClient {
   Future<Map<String, String>> _getHeaders() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt_token') ?? '';
-    return {
+    final headers = <String, String>{
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
     };
+    if (token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
   }
 
   static Completer<bool>? _refreshCompleter;

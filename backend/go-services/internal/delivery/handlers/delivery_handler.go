@@ -135,8 +135,12 @@ func (h *DeliveryHandler) GetRouteForCustomer(c *gin.Context) {
 	route, err := h.svc.GetRouteForCustomer(c.Request.Context(), trackingID, customerID)
 	if err != nil {
 		errStr := err.Error()
-		if strings.Contains(errStr, "not authorized") || strings.Contains(errStr, "no gig found") {
+		if strings.Contains(errStr, "not authorized") {
 			c.JSON(http.StatusForbidden, gin.H{"error": errStr})
+			return
+		}
+		if strings.Contains(errStr, "no gig found") || strings.Contains(errStr, "no gig") || strings.Contains(errStr, "no rows") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "gig not found"})
 			return
 		}
 		if strings.Contains(errStr, "no pickup") || strings.Contains(errStr, "no dropoff") {
@@ -165,8 +169,16 @@ func (h *DeliveryHandler) GetRouteByOrderForCustomer(c *gin.Context) {
 	route, gigID, err := h.svc.GetRouteByOrderForCustomer(c.Request.Context(), orderID, customerID)
 	if err != nil {
 		errStr := err.Error()
-		if strings.Contains(errStr, "not authorized") || strings.Contains(errStr, "no gig found") || strings.Contains(errStr, "no gig") {
+		if strings.Contains(errStr, "not authorized") {
 			c.JSON(http.StatusForbidden, gin.H{"error": errStr})
+			return
+		}
+		if strings.Contains(errStr, "no gig found") || strings.Contains(errStr, "no gig") || strings.Contains(errStr, "no rows") {
+			c.JSON(http.StatusOK, gin.H{
+				"route":  nil,
+				"gig_id": "",
+				"status": "pending_rider_assignment",
+			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": errStr})
