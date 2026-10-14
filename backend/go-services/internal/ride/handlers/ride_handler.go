@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -310,9 +311,92 @@ func (h *RideHandler) AcceptBid(c *gin.Context) {
 	c.JSON(http.StatusOK, bid)
 }
 
+// BumpFare handles POST /api/v1/rides/:tracking_id/bump-fare (customer only).
+// Allows the customer to bump their fare offer (+20, +50, +100 PKR) to attract nearby drivers faster.
+func (h *RideHandler) BumpFare(c *gin.Context) {
+	trackingID := c.Param("tracking_id")
+	if trackingID == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "tracking_id is required"})
+		return
+	}
+	callerID := middleware.GetTrackingID(c)
+	role := middleware.GetRole(c)
+	if role != "customer" || !strings.HasPrefix(callerID, "CUST-") {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error":   "FORBIDDEN_ROLE",
+			"message": "only customers may bump ride fare",
+		})
+		return
+	}
+
+	var req struct {
+		IncreaseAmount float64 `json:"increase_amount" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ride, err := h.svc.BumpFare(c.Request.Context(), trackingID, callerID, req.IncreaseAmount)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ride)
+}
+
+// GetNearbyRiders handles GET /api/v1/rides/nearby?lat=...&lng=...&radius=...
+// Discovers real-time drivers surrounding the customer's pickup coordinate.
+func (h *RideHandler) GetNearbyRiders(c *gin.Context) {
+	latStr := c.Query("lat")
+	lngStr := c.Query("lng")
+	radiusStr := c.DefaultQuery("radius", "5.0")
+
+	lat, err1 := strconv.ParseFloat(latStr, 64)
+	lng, err2 := strconv.ParseFloat(lngStr, 64)
+	if err1 != nil || err2 != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "valid lat and lng required"})
+		return
+	}
+	radius, _ := strconv.ParseFloat(radiusStr, 64)
+
+	riders := h.svc.FindNearbyRiders(c.Request.Context(), lat, lng, radius, 10)
+	c.JSON(http.StatusOK, gin.H{
+		"riders": riders,
+		"count":  len(riders),
+	})
+}
+
 func isRider(c *gin.Context) bool {
 	return middleware.GetRole(c) == "rider" &&
 		strings.HasPrefix(middleware.GetTrackingID(c), "RIDR-")
+}
+
+// RateRide HTTP handler for POST /api/v1/rides/:tracking_id/rate (customer only).
+func (h *RideHandler) RateRide(c *gin.Context) {
+	trackingID := c.Param("tracking_id")
+	if trackingID == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "tracking_id is required"})
+		return
+	}
+	role := middleware.GetRole(c)
+	if role != "customer" {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "FORBIDDEN_ROLE"})
+		return
+	}
+
+	var req models.RateRidePayload
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.CustomerTrackID = middleware.GetTrackingID(c)
+
+	if err := h.svc.RateRide(c.Request.Context(), trackingID, &req); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Rating submitted successfully"})
 }
 
 // RegisterRoutes attaches the ride handlers to the gin router.
@@ -322,6 +406,7 @@ func isRider(c *gin.Context) bool {
 func (h *RideHandler) RegisterRoutes(router *gin.Engine) {
 	rides := router.Group("/api/v1/rides", middleware.JWTAuth())
 	{
+		rides.GET("/nearby", h.GetNearbyRiders)
 		rides.POST("", h.RequestRide)
 		rides.POST("/", h.RequestRide)
 		rides.GET("/:tracking_id", h.GetRide)
@@ -332,5 +417,8 @@ func (h *RideHandler) RegisterRoutes(router *gin.Engine) {
 		rides.POST("/:tracking_id/bid", h.SubmitBid)
 		rides.GET("/:tracking_id/bids", h.GetBidsForRide)
 		rides.POST("/:tracking_id/accept-bid", h.AcceptBid)
+		rides.POST("/:tracking_id/bump-fare", h.BumpFare)
+		rides.POST("/:tracking_id/rate", h.RateRide)
 	}
 }
+

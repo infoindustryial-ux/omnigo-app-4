@@ -22,6 +22,7 @@ import (
 	orderRepo "github.com/omnigo/backend/internal/order/repository"
 	stripeClientPkg "github.com/omnigo/backend/internal/payment/stripe"
 	"github.com/omnigo/backend/internal/payment/payfast"
+	safepayClientPkg "github.com/omnigo/backend/internal/payment/safepay"
 	paymentRepo "github.com/omnigo/backend/internal/payment/repository"
 	paymentservice "github.com/omnigo/backend/internal/payment/service"
 	"github.com/omnigo/backend/internal/payment_orchestrator"
@@ -102,11 +103,14 @@ func main() {
 
 	// PayFast client (initialized early for COD card payment)
 	payfastClient := payfast.NewClientFromEnv()
+	// Safepay client for bank disbursements (Raastwire)
+	safepayClient := safepayClientPkg.NewClientFromEnv()
 
 	// 4. Initialize Handlers
 	codHandler := handlers.NewCODHandler(db.Writer, ledgerSvc, escrowSvc, calculator, payfastClient)
 	disputeHandler := handlers.NewDisputeHandler(db.Writer, escrowSvc)
-	vendorHandler := handlers.NewVendorHandler(db.Writer)
+	vendorHandler := handlers.NewVendorHandler(db.Writer, ledgerSvc, safepayClient)
+	safepayWebhookHandler := handlers.NewSafepayWebhookHandler(db.Writer, safepayClient)
 
 	// Return service (product return flow)
 	returnRepository := returnRepo.NewReturnRepository(db.Writer, db.Reader)
@@ -159,6 +163,17 @@ func main() {
 		payfastSplitHandler = handlers.NewPayFastSplitHandler(payfastService)
 		log.Println("PayFast split handler initialized")
 	}
+
+	// Safepay payment service & handler
+	safepayService := payfastSvc.NewSafepayService(
+		db.Writer,
+		ledgerSvc,
+		escrowSvc,
+		calculator,
+		safepayClient,
+	)
+	safepayWebhookHandler.SetSafepayService(safepayService)
+	safepayHandler := handlers.NewSafepayHandler(safepayService)
 
 	// 5. Setup Router
 	router := gin.Default()
@@ -224,6 +239,7 @@ func main() {
 	codHandler.RegisterRoutes(router)
 	disputeHandler.RegisterRoutes(router)
 	vendorHandler.RegisterRoutes(router)
+	safepayWebhookHandler.RegisterRoutes(router)
 	cardVaultHandler.RegisterRoutes(router)
 	returnHandler.RegisterRoutes(router)
 
@@ -289,6 +305,9 @@ func main() {
 		log.Println("PayFast split endpoints registered: /api/v1/payments/payfast/{payment,3ds_callback,ipn}")
 	}
 
+	// Safepay endpoints (hosted checkout + card 3ds charge + callback + status + quick-link)
+	safepayHandler.RegisterRoutes(router)
+
 	// Financial Reconciliation Endpoint (admin only)
 	reconCfg, err := config.LoadReconciliationConfig()
 	if err != nil {
@@ -321,7 +340,12 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	go workers.NewEscrowReleaserWorker(escrowSvc, rdbForEscrow).Start(workerCtx)
 	go workers.NewPayoutWorker(db.Writer, ledgerSvc, rdb).Start(workerCtx)
-	go workers.NewSettlementWorker(db.Writer, ledgerSvc, escrowSvc, calculator, payfastClient, rdb).Start(workerCtx)
+	go workers.NewSafepayPayoutWorker(db.Writer, ledgerSvc, safepayClient, rdb).Start(workerCtx)
+	settlementWorker := workers.NewSettlementWorker(db.Writer, ledgerSvc, escrowSvc, calculator, payfastClient, rdb)
+	if safepayClient != nil {
+		settlementWorker.SetSafepayClient(safepayClient)
+	}
+	go settlementWorker.Start(workerCtx)
 	go workers.NewStripeReplayWorker(db.Writer, stripeClient).Start(workerCtx)
 	go reconWorker.Start(workerCtx)
 

@@ -8,13 +8,34 @@ import (
 
 func TestNewOrchestratorNoGateways(t *testing.T) {
 	// Ensure no real env keys leak into the test.
-	for _, k := range []string{"STRIPE_SECRET_KEY", "JAZZCASH_SALT", "EASYPAISA_HASH_KEY", "PAYFAST_MERCHANT_ID", "PAYFAST_SECURED_KEY"} {
+	for _, k := range []string{"STRIPE_SECRET_KEY", "JAZZCASH_SALT", "EASYPAISA_HASH_KEY", "PAYFAST_MERCHANT_ID", "PAYFAST_SECURED_KEY", "SAFEPAY_SECRET_KEY", "SAFEPAY_MERCHANT_SECRET", "SAFEPAY_API_KEY"} {
 		os.Unsetenv(k)
 	}
 
 	o := NewOrchestrator()
 	if len(o.AvailableGateways()) != 0 {
 		t.Fatalf("expected 0 configured gateways, got %v", o.AvailableGateways())
+	}
+}
+
+func TestNewOrchestratorWithSafepay(t *testing.T) {
+	for _, k := range []string{"STRIPE_SECRET_KEY", "PAYFAST_MERCHANT_ID", "PAYFAST_SECURED_KEY"} {
+		os.Unsetenv(k)
+	}
+	os.Setenv("SAFEPAY_SECRET_KEY", "sec_dummy_test")
+	defer os.Unsetenv("SAFEPAY_SECRET_KEY")
+
+	o := NewOrchestrator()
+	available := o.AvailableGateways()
+	found := false
+	for _, gw := range available {
+		if gw == "safepay" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected safepay gateway to be available, got %v", available)
 	}
 }
 

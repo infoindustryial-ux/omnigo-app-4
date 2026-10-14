@@ -18,21 +18,26 @@ const (
 )
 
 type RefundRequest struct {
-	ID             string               `json:"id"`
-	OrderID       string               `json:"order_tracking_id"`
-	CustomerID    string               `json:"customer_tracking_id"`
-	Gateway        string               `json:"gateway"`
-	GatewayTxnID  string               `json:"gateway_txn_id"`
-	Amount         float64              `json:"amount"`
-	Currency      string               `json:"currency"`
-	Status         RefundRequestStatus `json:"status"`
-	Reason        string               `json:"reason"`
-	RequestedBy   string               `json:"requested_by"`
-	ProcessedBy   string               `json:"processed_by,omitempty"`
-	ProcessedAt   *time.Time           `json:"processed_at,omitempty"`
-	Notes         string               `json:"notes,omitempty"`
-	CreatedAt     time.Time            `json:"created_at"`
-	UpdatedAt     time.Time            `json:"updated_at"`
+	ID              string               `json:"id"`
+	OrderID         string               `json:"order_tracking_id"`
+	CustomerID      string               `json:"customer_tracking_id"`
+	Gateway         string               `json:"gateway"`
+	GatewayTxnID   string               `json:"gateway_txn_id"`
+	Amount          float64              `json:"amount"`
+	Currency        string               `json:"currency"`
+	Status          RefundRequestStatus `json:"status"`
+	Reason          string               `json:"reason"`
+	RequestedBy     string               `json:"requested_by"`
+	ProcessedBy     string               `json:"processed_by,omitempty"`
+	ProcessedAt     *time.Time           `json:"processed_at,omitempty"`
+	Notes           string               `json:"notes,omitempty"`
+	BeneficiaryName string               `json:"beneficiary_name,omitempty"`
+	BeneficiaryIBAN string               `json:"beneficiary_iban,omitempty"`
+	BankName        string               `json:"bank_name,omitempty"`
+	RefundGateway   string               `json:"refund_gateway,omitempty"`
+	PayoutID        *string              `json:"payout_id,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
+	UpdatedAt       time.Time            `json:"updated_at"`
 }
 
 type RefundRequestRepository struct {
@@ -47,12 +52,19 @@ func (r *RefundRequestRepository) Create(ctx context.Context, req *RefundRequest
 	query := `
 		INSERT INTO refund_requests (
 			id, order_tracking_id, customer_tracking_id, gateway, gateway_txn_id,
-			amount, currency, status, reason, requested_by, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+			amount, currency, status, reason, requested_by,
+			beneficiary_name, beneficiary_iban, bank_name, refund_gateway,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 	`
+	refundGateway := req.RefundGateway
+	if refundGateway == "" {
+		refundGateway = "safepay"
+	}
 	_, err := r.db.Exec(ctx, query,
 		req.ID, req.OrderID, req.CustomerID, req.Gateway, req.GatewayTxnID,
 		req.Amount, req.Currency, req.Status, req.Reason, req.RequestedBy,
+		req.BeneficiaryName, req.BeneficiaryIBAN, req.BankName, refundGateway,
 	)
 	return err
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/omnigo/backend/internal/analytics"
 	"github.com/omnigo/backend/internal/escrow"
 	"github.com/omnigo/backend/internal/ledger"
+	"github.com/omnigo/backend/internal/payment/safepay"
 	"github.com/omnigo/backend/internal/shared/cache"
 	"github.com/omnigo/backend/internal/shared/config"
 	"github.com/omnigo/backend/internal/shared/health"
@@ -675,10 +676,22 @@ func main() {
 			_ = dbPool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total)
 
 			query := `
-				SELECT vp.id::text, vp.vendor_tracking_id, vp.amount, COALESCE(vp.method, 'bank_transfer'),
-					   vp.status, COALESCE(vp.batch_id::text, ''),
-					   vp.created_at, COALESCE(vp.completed_at, '0001-01-01T00:00:00Z'),
-					   COALESCE(u.full_name, 'Unknown')
+				SELECT vp.id::text, vp.vendor_tracking_id, vp.amount,
+				       COALESCE(vp.amount_paisa, (vp.amount * 100)::bigint),
+				       COALESCE(vp.payout_fee_paisa, 0),
+				       COALESCE(vp.method, 'bank_transfer'),
+				       vp.status,
+				       COALESCE(vp.beneficiary_name, u.full_name, 'Vendor'),
+				       COALESCE(vp.beneficiary_iban, ''),
+				       COALESCE(vp.bank_name, 'Bank'),
+				       COALESCE(vp.gateway, 'safepay'),
+				       COALESCE(vp.trace_reference, ''),
+				       COALESCE(vp.failure_reason, ''),
+				       COALESCE(vp.batch_id::text, ''),
+				       COALESCE(vp.scheduled_at::text, ''),
+				       vp.created_at::text,
+				       COALESCE(vp.completed_at::text, ''),
+				       COALESCE(u.full_name, 'Unknown')
 				FROM vendor_payouts vp
 				LEFT JOIN users u ON u.tracking_id = vp.vendor_tracking_id
 			` + whereClause + ` ORDER BY vp.created_at DESC LIMIT $` + strconv.Itoa(len(args)+1) + ` OFFSET $` + strconv.Itoa(len(args)+2)
@@ -691,21 +704,35 @@ func main() {
 			}
 			defer rows.Close()
 
-			type PayoutRecord struct {
+			type VendorPayoutRecord struct {
 				ID               string  `json:"id"`
 				VendorTrackingID string  `json:"vendor_tracking_id"`
 				VendorName       string  `json:"vendor_name"`
 				Amount           float64 `json:"amount"`
+				AmountPaisa      int64   `json:"amount_paisa"`
+				PayoutFeePaisa   int64   `json:"payout_fee_paisa"`
 				Method           string  `json:"method"`
 				Status           string  `json:"status"`
+				BeneficiaryName  string  `json:"beneficiary_name"`
+				BeneficiaryIBAN  string  `json:"beneficiary_iban"`
+				BankName         string  `json:"bank_name"`
+				Gateway          string  `json:"gateway"`
+				TraceReference   string  `json:"trace_reference"`
+				FailureReason    string  `json:"failure_reason"`
 				BatchID          string  `json:"batch_id"`
+				ScheduledAt      string  `json:"scheduled_at"`
 				CreatedAt        string  `json:"created_at"`
 				CompletedAt      string  `json:"completed_at"`
 			}
-			var payouts []PayoutRecord
+			var payouts []VendorPayoutRecord
 			for rows.Next() {
-				var p PayoutRecord
-				if err := rows.Scan(&p.ID, &p.VendorTrackingID, &p.Amount, &p.Method, &p.Status, &p.BatchID, &p.CreatedAt, &p.CompletedAt, &p.VendorName); err != nil {
+				var p VendorPayoutRecord
+				if err := rows.Scan(
+					&p.ID, &p.VendorTrackingID, &p.Amount, &p.AmountPaisa, &p.PayoutFeePaisa,
+					&p.Method, &p.Status, &p.BeneficiaryName, &p.BeneficiaryIBAN,
+					&p.BankName, &p.Gateway, &p.TraceReference, &p.FailureReason,
+					&p.BatchID, &p.ScheduledAt, &p.CreatedAt, &p.CompletedAt, &p.VendorName,
+				); err != nil {
 					continue
 				}
 				payouts = append(payouts, p)
@@ -715,10 +742,14 @@ func main() {
 
 		adminRoutes.POST("/finance/vendor-payouts/:id/approve", func(c *gin.Context) {
 			payoutID := c.Param("id")
-			_, err := dbPool.Exec(c.Request.Context(),
-				`UPDATE vendor_payouts SET status = 'approved', updated_at = NOW() WHERE id = $1 AND status = 'pending'`, payoutID)
+			tag, err := dbPool.Exec(c.Request.Context(),
+				`UPDATE vendor_payouts SET status = 'approved', updated_at = NOW() WHERE id = $1 AND status IN ('pending', 'scheduled')`, payoutID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			if tag.RowsAffected() == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "payout not found or not in pending/scheduled status"})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{"status": "approved", "payout_id": payoutID})
@@ -726,13 +757,368 @@ func main() {
 
 		adminRoutes.POST("/finance/vendor-payouts/:id/reject", func(c *gin.Context) {
 			payoutID := c.Param("id")
-			_, err := dbPool.Exec(c.Request.Context(),
-				`UPDATE vendor_payouts SET status = 'rejected', updated_at = NOW() WHERE id = $1 AND status = 'pending'`, payoutID)
+			reason := c.DefaultPostForm("reason", "Rejected by administrator")
+
+			tx, err := dbPool.Begin(c.Request.Context())
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			defer tx.Rollback(c.Request.Context())
+
+			var vendorID string
+			var amountPaisa int64
+			err = tx.QueryRow(c.Request.Context(),
+				`SELECT vendor_tracking_id, COALESCE(amount_paisa, (amount * 100)::bigint)
+				 FROM vendor_payouts WHERE id = $1 AND status IN ('pending', 'scheduled', 'approved') FOR UPDATE`,
+				payoutID,
+			).Scan(&vendorID, &amountPaisa)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "payout not found or cannot be rejected"})
+				return
+			}
+
+			_, err = tx.Exec(c.Request.Context(),
+				`UPDATE vendor_payouts SET status = 'rejected', failure_reason = $2, updated_at = NOW() WHERE id = $1`,
+				payoutID, reason)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Refund vendor wallet balance
+			_, err = tx.Exec(c.Request.Context(),
+				`UPDATE vendor_wallet
+				 SET balance_paisa = balance_paisa + $1, total_payouts_paisa = total_payouts_paisa - $1
+				 WHERE vendor_tracking_id = $2`,
+				amountPaisa, vendorID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			if err := tx.Commit(c.Request.Context()); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
 			c.JSON(http.StatusOK, gin.H{"status": "rejected", "payout_id": payoutID})
+		})
+
+		// Instant automated disbursement via Safepay Raastwire
+		adminRoutes.POST("/finance/vendor-payouts/:id/disburse-safepay", func(c *gin.Context) {
+			payoutID := c.Param("id")
+			ctx := c.Request.Context()
+
+			var vendorID, iban, name string
+			var amountPaisa, feePaisa int64
+			var status string
+			err := dbPool.QueryRow(ctx,
+				`SELECT vendor_tracking_id, COALESCE(beneficiary_iban,''), COALESCE(beneficiary_name,'Vendor'),
+				        COALESCE(amount_paisa, (amount*100)::bigint), COALESCE(payout_fee_paisa, 0), status
+				 FROM vendor_payouts WHERE id = $1`, payoutID,
+			).Scan(&vendorID, &iban, &name, &amountPaisa, &feePaisa, &status)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "payout not found"})
+				return
+			}
+			if status == "completed" || status == "paid" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "payout already completed"})
+				return
+			}
+			if iban == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "beneficiary IBAN is required for Safepay disbursement"})
+				return
+			}
+
+			safepayClient := safepay.NewClientFromEnv()
+			if !safepayClient.IsConfigured() {
+				// Mark as approved for manual 1IBFT corporate banking transfer
+				_, _ = dbPool.Exec(ctx, `UPDATE vendor_payouts SET status = 'approved', updated_at = NOW() WHERE id = $1`, payoutID)
+				c.JSON(http.StatusOK, gin.H{
+					"status":    "approved",
+					"payout_id": payoutID,
+					"message":   "Safepay gateway credentials not configured; payout marked approved for manual 1IBFT bank export",
+				})
+				return
+			}
+
+			netPaisa := amountPaisa - feePaisa
+			if netPaisa <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "net payout amount after fees must be positive"})
+				return
+			}
+			netRupees := fmt.Sprintf("%.2f", float64(netPaisa)/100.0)
+
+			resp, err := safepayClient.InitiatePayout(ctx, safepay.PayoutRequest{
+				RequestID:       payoutID,
+				Amount:          netRupees,
+				CreditorIBAN:    iban,
+				BeneficiaryName: name,
+				Narration:       fmt.Sprintf("OMNIGO Vendor Payout %s", vendorID),
+			})
+			if err != nil {
+				_, _ = dbPool.Exec(ctx, `UPDATE vendor_payouts SET failure_reason = $2, updated_at = NOW() WHERE id = $1`, payoutID, err.Error())
+				c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Safepay Raastwire transfer failed: %v", err)})
+				return
+			}
+
+			pStatus := "completed"
+			if resp.Status != "" {
+				pStatus = resp.Status
+			}
+			_, _ = dbPool.Exec(ctx,
+				`UPDATE vendor_payouts
+				 SET status = $2, trace_reference = $3, completed_at = NOW(), updated_at = NOW()
+				 WHERE id = $1`,
+				payoutID, pStatus, resp.TraceReference,
+			)
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":          pStatus,
+				"trace_reference": resp.TraceReference,
+				"payout_id":       payoutID,
+				"net_amount":      netRupees,
+			})
+		})
+
+		// ── Rider Payout Management ────────────────────────────
+		adminRoutes.GET("/finance/rider-payouts", func(c *gin.Context) {
+			statusFilter := c.DefaultQuery("status", "all")
+			limit, offset := parsePagination(c)
+			ctx := c.Request.Context()
+
+			countQuery := `SELECT COUNT(*) FROM rider_payouts`
+			whereClause := ""
+			args := []interface{}{}
+			if statusFilter != "all" {
+				whereClause = " WHERE status = $1"
+				args = append(args, statusFilter)
+			}
+			var total int
+			_ = dbPool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total)
+
+			query := `
+				SELECT rp.id::text, rp.rider_tracking_id, rp.amount,
+				       COALESCE(rp.amount_paisa, (rp.amount * 100)::bigint),
+				       COALESCE(rp.payout_fee_paisa, 0),
+				       COALESCE(rp.method, 'bank_transfer'),
+				       rp.status,
+				       COALESCE(rp.account_title, u.full_name, 'Rider'),
+				       COALESCE(rp.account_number, ''),
+				       COALESCE(rp.beneficiary_iban, rp.account_number, ''),
+				       COALESCE(rp.bank_name, 'Bank'),
+				       COALESCE(rp.gateway, 'safepay'),
+				       COALESCE(rp.trace_reference, ''),
+				       COALESCE(rp.failure_reason, ''),
+				       COALESCE(rp.batch_id::text, ''),
+				       rp.created_at::text,
+				       COALESCE(rp.completed_at::text, ''),
+				       COALESCE(u.full_name, 'Unknown'),
+				       COALESCE(u.phone, '')
+				FROM rider_payouts rp
+				LEFT JOIN users u ON u.tracking_id = rp.rider_tracking_id
+			` + whereClause + ` ORDER BY rp.created_at DESC LIMIT $` + strconv.Itoa(len(args)+1) + ` OFFSET $` + strconv.Itoa(len(args)+2)
+			args = append(args, limit, offset)
+
+			rows, err := dbPool.Query(ctx, query, args...)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			defer rows.Close()
+
+			type RiderPayoutRecord struct {
+				ID              string  `json:"id"`
+				RiderTrackingID string  `json:"rider_tracking_id"`
+				RiderName       string  `json:"rider_name"`
+				RiderPhone      string  `json:"rider_phone"`
+				Amount          float64 `json:"amount"`
+				AmountPaisa     int64   `json:"amount_paisa"`
+				PayoutFeePaisa  int64   `json:"payout_fee_paisa"`
+				Method          string  `json:"method"`
+				Status          string  `json:"status"`
+				AccountTitle    string  `json:"account_title"`
+				AccountNumber   string  `json:"account_number"`
+				BeneficiaryIBAN string  `json:"beneficiary_iban"`
+				BankName        string  `json:"bank_name"`
+				Gateway         string  `json:"gateway"`
+				TraceReference  string  `json:"trace_reference"`
+				FailureReason   string  `json:"failure_reason"`
+				BatchID         string  `json:"batch_id"`
+				CreatedAt       string  `json:"created_at"`
+				CompletedAt     string  `json:"completed_at"`
+			}
+			var payouts []RiderPayoutRecord
+			for rows.Next() {
+				var p RiderPayoutRecord
+				if err := rows.Scan(
+					&p.ID, &p.RiderTrackingID, &p.Amount, &p.AmountPaisa, &p.PayoutFeePaisa,
+					&p.Method, &p.Status, &p.AccountTitle, &p.AccountNumber, &p.BeneficiaryIBAN,
+					&p.BankName, &p.Gateway, &p.TraceReference, &p.FailureReason,
+					&p.BatchID, &p.CreatedAt, &p.CompletedAt, &p.RiderName, &p.RiderPhone,
+				); err != nil {
+					continue
+				}
+				payouts = append(payouts, p)
+			}
+			c.JSON(http.StatusOK, gin.H{"payouts": payouts, "total": total, "limit": limit, "offset": offset})
+		})
+
+		adminRoutes.POST("/finance/rider-payouts/:id/approve", func(c *gin.Context) {
+			payoutID := c.Param("id")
+			tag, err := dbPool.Exec(c.Request.Context(),
+				`UPDATE rider_payouts SET status = 'approved', updated_at = NOW() WHERE id = $1 AND status = 'pending'`, payoutID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			if tag.RowsAffected() == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "payout not found or not in pending status"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "approved", "payout_id": payoutID})
+		})
+
+		adminRoutes.POST("/finance/rider-payouts/:id/reject", func(c *gin.Context) {
+			payoutID := c.Param("id")
+			reason := c.DefaultPostForm("reason", "Rejected by administrator")
+
+			tx, err := dbPool.Begin(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			defer tx.Rollback(c.Request.Context())
+
+			var riderID string
+			var amountPaisa int64
+			err = tx.QueryRow(c.Request.Context(),
+				`SELECT rider_tracking_id, COALESCE(amount_paisa, (amount * 100)::bigint)
+				 FROM rider_payouts WHERE id = $1 AND status IN ('pending', 'approved') FOR UPDATE`,
+				payoutID,
+			).Scan(&riderID, &amountPaisa)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "payout not found or cannot be rejected"})
+				return
+			}
+
+			_, err = tx.Exec(c.Request.Context(),
+				`UPDATE rider_payouts SET status = 'rejected', failure_reason = $2, updated_at = NOW() WHERE id = $1`,
+				payoutID, reason)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Refund rider wallet balance
+			_, err = tx.Exec(c.Request.Context(),
+				`UPDATE rider_wallet
+				 SET balance_paisa = balance_paisa + $1, balance = (balance_paisa + $1)::decimal / 100.0, updated_at = NOW()
+				 WHERE rider_tracking_id = $2`,
+				amountPaisa, riderID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			if err := tx.Commit(c.Request.Context()); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"status": "rejected", "payout_id": payoutID})
+		})
+
+		// Instant automated disbursement via Safepay Raastwire for Riders
+		adminRoutes.POST("/finance/rider-payouts/:id/disburse-safepay", func(c *gin.Context) {
+			payoutID := c.Param("id")
+			ctx := c.Request.Context()
+
+			var riderID, iban, name string
+			var amountPaisa, feePaisa int64
+			var status string
+			err := dbPool.QueryRow(ctx,
+				`SELECT rider_tracking_id, COALESCE(beneficiary_iban, account_number, ''),
+				        COALESCE(account_title, 'Rider'),
+				        COALESCE(amount_paisa, (amount*100)::bigint), COALESCE(payout_fee_paisa, 0), status
+				 FROM rider_payouts WHERE id = $1`, payoutID,
+			).Scan(&riderID, &iban, &name, &amountPaisa, &feePaisa, &status)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "rider payout not found"})
+				return
+			}
+			if status == "completed" || status == "paid" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "payout already completed"})
+				return
+			}
+			if iban == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "beneficiary IBAN is required for Safepay disbursement"})
+				return
+			}
+
+			safepayClient := safepay.NewClientFromEnv()
+			if !safepayClient.IsConfigured() {
+				_, _ = dbPool.Exec(ctx, `UPDATE rider_payouts SET status = 'approved', updated_at = NOW() WHERE id = $1`, payoutID)
+				c.JSON(http.StatusOK, gin.H{
+					"status":    "approved",
+					"payout_id": payoutID,
+					"message":   "Safepay gateway credentials not configured; payout marked approved for manual 1IBFT bank export",
+				})
+				return
+			}
+
+			netPaisa := amountPaisa - feePaisa
+			if netPaisa <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "net payout amount after fees must be positive"})
+				return
+			}
+			netRupees := fmt.Sprintf("%.2f", float64(netPaisa)/100.0)
+
+			resp, err := safepayClient.InitiatePayout(ctx, safepay.PayoutRequest{
+				RequestID:       payoutID,
+				Amount:          netRupees,
+				CreditorIBAN:    iban,
+				BeneficiaryName: name,
+				Narration:       fmt.Sprintf("OMNIGO Rider Payout %s", riderID),
+			})
+			if err != nil {
+				_, _ = dbPool.Exec(ctx, `UPDATE rider_payouts SET failure_reason = $2, updated_at = NOW() WHERE id = $1`, payoutID, err.Error())
+				c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Safepay Raastwire transfer failed: %v", err)})
+				return
+			}
+
+			pStatus := "completed"
+			if resp.Status != "" {
+				pStatus = resp.Status
+			}
+			_, _ = dbPool.Exec(ctx,
+				`UPDATE rider_payouts
+				 SET status = $2, trace_reference = $3, completed_at = NOW(), updated_at = NOW()
+				 WHERE id = $1`,
+				payoutID, pStatus, resp.TraceReference,
+			)
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":          pStatus,
+				"trace_reference": resp.TraceReference,
+				"payout_id":       payoutID,
+				"net_amount":      netRupees,
+			})
+		})
+
+		// 1LINK / 1IBFT Corporate Payout CSV Export Endpoint (supports all, vendor, rider)
+		payoutExportSvc := admin.NewPayoutExportService(dbPool)
+		adminRoutes.GET("/finance/payouts/export-1ibft", func(c *gin.Context) {
+			batchID := c.Query("batch_id")
+			payoutType := c.DefaultQuery("type", "all")
+			csvBytes, filename, err := payoutExportSvc.Export1IBFTCSVPending(c.Request.Context(), batchID, payoutType)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+			c.Data(http.StatusOK, "text/csv", csvBytes)
 		})
 
 		// ── Stripe Webhook Events (audit trail) ─────────────────

@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -110,6 +111,7 @@ func (w *StockReservationWorker) processOrderReservations(ctx context.Context, o
 		for _, item := range items {
 			w.repo.FailStockReservation(ctx, orderID, item.ProductTrackingID, res.Message)
 		}
+		w.handleReservationFailure(ctx, orderID, res.Message)
 		return
 	}
 
@@ -117,6 +119,90 @@ func (w *StockReservationWorker) processOrderReservations(ctx context.Context, o
 	if err := w.handleReservationSuccess(ctx, orderID, items, res); err != nil {
 		log.Printf("[StockReservationWorker] Failed to handle success for order %s: %v", orderID, err)
 	}
+}
+
+// handleReservationFailure handles out-of-stock or inventory reservation rejection.
+// It fails the order, cancels any associated delivery gig, and if the order was prepaid,
+// queues a 100% refund into outbox_events to credit the customer's wallet immediately.
+func (w *StockReservationWorker) handleReservationFailure(ctx context.Context, orderID, reason string) {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		log.Printf("[StockReservationWorker] Failed to begin tx on failure for order %s: %v", orderID, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var paymentStatus string
+	var totalBilledPaisa int64
+	var totalAmount float64
+	var currency string
+	err = tx.QueryRow(ctx,
+		`SELECT payment_status, COALESCE(total_billed_amount_paisa, 0),
+		        COALESCE(total_amount, 0), COALESCE(currency, 'PKR')
+		 FROM orders WHERE order_tracking_id = $1`,
+		orderID,
+	).Scan(&paymentStatus, &totalBilledPaisa, &totalAmount, &currency)
+	if err != nil {
+		log.Printf("[StockReservationWorker] Failed to query order %s on failure: %v", orderID, err)
+		return
+	}
+
+	newPaymentStatus := "failed"
+	if paymentStatus == "paid" {
+		newPaymentStatus = "refund_pending"
+	}
+
+	// 1. Mark order failed
+	_, err = tx.Exec(ctx,
+		`UPDATE orders SET status = 'failed', payment_status = $1, updated_at = NOW()
+		 WHERE order_tracking_id = $2`,
+		newPaymentStatus, orderID,
+	)
+	if err != nil {
+		log.Printf("[StockReservationWorker] Failed to update order %s status to failed: %v", orderID, err)
+		return
+	}
+
+	// 2. Cancel delivery gig
+	_, _ = tx.Exec(ctx,
+		`UPDATE deliveries SET status = 'cancelled', updated_at = NOW()
+		 WHERE order_tracking_id = $1 AND status NOT IN ('completed', 'cancelled')`,
+		orderID,
+	)
+
+	// 3. If order was prepaid, enqueue 100% refund into outbox_events
+	if paymentStatus == "paid" {
+		refundAmount := totalAmount
+		if totalBilledPaisa > 0 {
+			refundAmount = float64(totalBilledPaisa) / 100.0
+		}
+		payload := map[string]interface{}{
+			"order_id":      orderID,
+			"reason":        "out_of_stock_auto_reject: " + reason,
+			"refund_amount": refundAmount,
+			"currency":      currency,
+			"refund_to":     "original",
+			"timestamp":     time.Now().UnixMilli(),
+		}
+		payloadBytes, _ := json.Marshal(payload)
+		_, err = tx.Exec(ctx,
+			`INSERT INTO outbox_events (aggregate_id, topic, payload, status, created_at, updated_at)
+			 VALUES ($1, 'payment_refund', $2::jsonb, 'PENDING', NOW(), NOW())`,
+			orderID, payloadBytes,
+		)
+		if err != nil {
+			log.Printf("[StockReservationWorker] Failed to enqueue refund outbox for order %s: %v", orderID, err)
+			return
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("[StockReservationWorker] Failed to commit failure tx for order %s: %v", orderID, err)
+		return
+	}
+
+	log.Printf("[StockReservationWorker] Handled stock reservation failure for %s (paid=%v, reason=%s)",
+		orderID, paymentStatus == "paid", reason)
 }
 
 func (w *StockReservationWorker) handleReservationSuccess(
@@ -169,26 +255,30 @@ func (w *StockReservationWorker) handleReservationSuccess(
 			}
 		}
 
-		// Recalculate order total
-		var total float64
-		for _, rItem := range res.Items {
-			total += rItem.PriceAtCheckout * float64(rItem.Quantity)
-		}
-		_, err = tx.Exec(ctx, `
-			UPDATE orders
-			SET total_amount = $1, updated_at = NOW()
-			WHERE order_tracking_id = $2
-		`, total, orderID)
-		if err != nil {
-			return fmt.Errorf("failed to update order total: %w", err)
+		// Only set total_amount if it was uninitialized (0), do NOT overwrite authorized checkout amount!
+		var currentTotal float64
+		_ = tx.QueryRow(ctx, "SELECT COALESCE(total_amount, 0) FROM orders WHERE order_tracking_id = $1", orderID).Scan(&currentTotal)
+		if currentTotal <= 0 {
+			var total float64
+			for _, rItem := range res.Items {
+				total += rItem.PriceAtCheckout * float64(rItem.Quantity)
+			}
+			_, err = tx.Exec(ctx, `
+				UPDATE orders
+				SET total_amount = $1, updated_at = NOW()
+				WHERE order_tracking_id = $2
+			`, total, orderID)
+			if err != nil {
+				return fmt.Errorf("failed to update order total: %w", err)
+			}
 		}
 
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("failed to commit order updates: %w", err)
 		}
 
-		log.Printf("[StockReservationWorker] Order %s confirmed: vendor=%s, store=%s, total=%.2f",
-			orderID, res.VendorTrackingId, res.StoreTrackingId, total)
+		log.Printf("[StockReservationWorker] Order %s confirmed: vendor=%s, store=%s",
+			orderID, res.VendorTrackingId, res.StoreTrackingId)
 	}
 
 	return nil

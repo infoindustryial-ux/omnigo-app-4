@@ -13,7 +13,8 @@ import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/services/cart_provider.dart';
 
 import '../../data/models/product.dart';
-import '../widgets/payfast_card_sheet.dart';
+import '../../../../core/di/service_locator.dart';
+import '../../../../core/services/payfast_service.dart';
 import 'order_success_screen.dart';
 import 'vendor_store_page.dart';
 
@@ -222,7 +223,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
         title: const Text('Select Payment Method', style: TextStyle(fontWeight: FontWeight.bold)),
         children: [
           _buildPaymentOption(ctx, 'card', 'Credit / Debit Card', Icons.credit_card, Colors.blue),
-          _buildPaymentOption(ctx, 'payfast', 'PayFast (PK)', Icons.payment_outlined, Colors.deepOrange),
+          _buildPaymentOption(ctx, 'payfast', 'PayFast (Cards, Bank, Wallets)', Icons.security, Colors.deepOrange),
           _buildPaymentOption(ctx, 'wallet', 'Wallet Balance', Icons.account_balance_wallet, Colors.teal),
           _buildPaymentOption(ctx, 'jazzcash', 'JazzCash', Icons.account_balance_wallet_outlined, Colors.red),
           _buildPaymentOption(ctx, 'easypaisa', 'EasyPaisa', Icons.account_balance_wallet_outlined, Colors.green),
@@ -422,6 +423,17 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
   Future<void> _executeCheckout() async {
     if (_isCheckoutProcessing) return;
+
+    if (widget.product.stock <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This product is currently out of stock and cannot be ordered.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     // ── Payment method selector ─────────────────────────────────────
     final paymentChoice = await _showPaymentMethodDialog();
@@ -686,126 +698,46 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
           await prefs.remove('pending_order_status');
           return;
         }
-      } else if (paymentChoice == 'payfast') {
+      } else if (paymentChoice == 'safepay' || paymentChoice == 'payfast') {
         if (!mounted) return;
-        final cardDetails = await showPayFastCardDetailsSheet(context);
-        if (cardDetails == null) {
-          if (mounted) setState(() => _isCheckoutProcessing = false);
-          await prefs.remove('pending_nonce');
-          return;
-        }
+        final payfastService = sl<PayfastService>();
+        final pfResult = await payfastService.processPayment(
+          context: context,
+          basketId: realOrderTrackingId,
+          amount: totalPrice,
+          description: 'OMNIGO Order #$realOrderTrackingId',
+        );
 
-        Map<String, dynamic> pfData;
-        try {
-          pfData = await ApiClient().post(ApiEndpoints.payfastPayment(), {
-            'order_id': realOrderTrackingId,
-            'card_number': cardDetails['card_number'],
-            'expiry_month': cardDetails['expiry_month'],
-            'expiry_year': cardDetails['expiry_year'],
-            'cvv': cardDetails['cvv'],
-            'customer_mobile_no': cardDetails['customer_mobile_no'],
-          }, idempotencyKey: 'buynow-$nonce') as Map<String, dynamic>;
-        } catch (e) {
-          if (mounted) setState(() => _isCheckoutProcessing = false);
-          final msg = e.toString();
-          if (msg.contains('409')) {
+        if (pfResult.isCancelled) {
+          // Enterprise fail-safe: check if order was actually marked paid via IPN
+          bool isOrderPaid = false;
+          try {
+            final orderCheck = await ApiClient().get('/orders/$realOrderTrackingId') as Map<String, dynamic>;
+            final pStatus = (orderCheck['payment_status'] ?? orderCheck['status'])?.toString().toLowerCase();
+            if (pStatus == 'paid' || pStatus == 'confirmed' || pStatus == 'settlement_pending') {
+              isOrderPaid = true;
+            }
+          } catch (_) {}
+
+          if (!isOrderPaid) {
+            await _cancelOrderOnFailure(realOrderTrackingId, 'Payment window was closed');
             await prefs.remove('pending_nonce');
             await prefs.remove('pending_order_product');
             await prefs.remove('pending_order_status');
             if (mounted) {
-              await Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => OrderSuccessScreen(
-                    trackingId: realOrderTrackingId,
-                    pending: false,
-                  ),
-                ),
-                (route) => route.isFirst,
-              );
-              return;
+              setState(() => _isCheckoutProcessing = false);
+              _showErrorDialog('PayFast payment was cancelled or closed.');
             }
+            return;
           }
-          if (mounted) _showErrorDialog('Failed to initiate PayFast payment. Please try again.');
-          await _cancelOrderOnFailure(realOrderTrackingId, 'PayFast init failed');
-          return;
-        }
-
-        final status = pfData['status']?.toString();
-        if (status == 'failed') {
+        } else if (!pfResult.success) {
           if (mounted) setState(() => _isCheckoutProcessing = false);
-          if (mounted) _showErrorDialog(pfData['message']?.toString() ?? 'PayFast payment failed');
-          await _cancelOrderOnFailure(realOrderTrackingId, 'PayFast payment failed: ${pfData['message']}');
+          if (mounted) _showErrorDialog(pfResult.errorMessage ?? 'PayFast payment failed');
+          await _cancelOrderOnFailure(realOrderTrackingId, 'PayFast payment failed: ${pfResult.errorMessage}');
+          await prefs.remove('pending_nonce');
+          await prefs.remove('pending_order_product');
+          await prefs.remove('pending_order_status');
           return;
-        }
-
-        if (status == 'hosted_redirect') {
-          final redirectUrl = pfData['redirect_url']?.toString() ?? '';
-          if (redirectUrl.isNotEmpty && mounted) {
-            final uri = Uri.parse(redirectUrl);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Payment page opened. Your order will update after payment.'),
-                  duration: Duration(seconds: 5),
-                ),
-              );
-            }
-            if (mounted) {
-              await prefs.remove('pending_nonce');
-              await prefs.remove('pending_order_product');
-              await prefs.remove('pending_order_status');
-              await Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => OrderSuccessScreen(
-                    trackingId: realOrderTrackingId,
-                    pending: true,
-                  ),
-                ),
-                (route) => route.isFirst,
-              );
-            }
-            return;
-          } else {
-            if (mounted) setState(() => _isCheckoutProcessing = false);
-            if (mounted) _showErrorDialog('Payment gateway returned no redirect URL');
-            return;
-          }
-        }
-
-        if (status == '3ds_redirect' || pfData['action'] == '3ds_redirect') {
-          final threedHtml = pfData['threed_html']?.toString() ?? '';
-          if (threedHtml.isNotEmpty && mounted) {
-            final verified = await showPayFast3DSChallenge(context, threedHtml);
-            if (!verified) {
-              try {
-                await ApiClient().post('/orders/$realOrderTrackingId/cancel', {});
-                debugPrint('3DS cancel: backend cancel succeeded');
-              } catch (e) {
-                debugPrint('3DS cancel: backend cancel failed: $e');
-              }
-              if (mounted) setState(() => _isCheckoutProcessing = false);
-              if (mounted) {
-                _showErrorDialog('3DS verification was cancelled. Your order has been cancelled.');
-              }
-              return;
-            }
-          }
-        }
-
-        if (status == 'gateway_pending' || status == 'in_progress') {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Payment is processing at the gateway. Your order will update automatically once it completes.'),
-                duration: Duration(seconds: 5),
-              ),
-            );
-          }
         }
       } else {
         // Cash on Delivery — no payment gateway call needed
@@ -1036,6 +968,31 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
                       ),
                     ],
                   ),
+                  if (widget.product.stock <= 0)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red.shade300),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.remove_circle_outline, size: 14, color: Colors.red.shade700),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Out of Stock',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 12),
 
                   // H4: Show estimated delivery fee with location status
@@ -1262,9 +1219,9 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
                             IconButton(
                               icon: Icon(
                                 Icons.remove_rounded,
-                                color: _isCheckoutProcessing ? Colors.grey : AppTheme.blackAccent,
+                                color: (_isCheckoutProcessing || widget.product.stock <= 0) ? Colors.grey : AppTheme.blackAccent,
                               ),
-                              onPressed: _isCheckoutProcessing || _quantity <= 1
+                              onPressed: (_isCheckoutProcessing || _quantity <= 1 || widget.product.stock <= 0)
                                   ? null
                                   : () => setState(() => _quantity--),
                             ),
@@ -1273,15 +1230,15 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
-                                color: _isCheckoutProcessing ? Colors.grey : AppTheme.blackAccent,
+                                color: (_isCheckoutProcessing || widget.product.stock <= 0) ? Colors.grey : AppTheme.blackAccent,
                               ),
                             ),
                             IconButton(
                               icon: Icon(
                                 Icons.add_rounded,
-                                color: _isCheckoutProcessing ? Colors.grey : AppTheme.blackAccent,
+                                color: (_isCheckoutProcessing || widget.product.stock <= 0) ? Colors.grey : AppTheme.blackAccent,
                               ),
-                              onPressed: _isCheckoutProcessing || _quantity >= _maxQuantity
+                              onPressed: (_isCheckoutProcessing || _quantity >= _maxQuantity || widget.product.stock <= 0)
                                   ? null
                                   : () => setState(() => _quantity++),
                             ),
@@ -1347,41 +1304,47 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
                         width: 60,
                         margin: const EdgeInsets.only(right: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
+                          border: Border.all(color: widget.product.stock <= 0 ? Colors.grey.shade200 : Colors.grey.shade300),
                           borderRadius: BorderRadius.circular(16),
+                          color: widget.product.stock <= 0 ? Colors.grey.shade100 : Colors.white,
                         ),
                         child: IconButton(
-                          icon: const Icon(Icons.add_shopping_cart, color: AppTheme.blackAccent),
-                          onPressed: () {
-                            context.read<CartProvider>().addItem(prod, quantity: _quantity);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Added $_quantity x $name to cart!'),
-                                backgroundColor: Colors.green,
-                                behavior: SnackBarBehavior.floating,
-                                duration: const Duration(milliseconds: 800),
-                              ),
-                            );
-                          },
+                          icon: Icon(
+                            Icons.add_shopping_cart,
+                            color: widget.product.stock <= 0 ? Colors.grey : AppTheme.blackAccent,
+                          ),
+                          onPressed: widget.product.stock <= 0
+                              ? null
+                              : () {
+                                  context.read<CartProvider>().addItem(prod, quantity: _quantity);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Added $_quantity x $name to cart!'),
+                                      backgroundColor: Colors.green,
+                                      behavior: SnackBarBehavior.floating,
+                                      duration: const Duration(milliseconds: 800),
+                                    ),
+                                  );
+                                },
                         ),
                       ),
                       Expanded(
                         child: SizedBox(
                           height: 55,
                           child: ElevatedButton(
-                            onPressed: _isCheckoutProcessing ? null : _executeCheckout,
+                            onPressed: (_isCheckoutProcessing || widget.product.stock <= 0) ? null : _executeCheckout,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.blackAccent,
+                              backgroundColor: widget.product.stock <= 0 ? Colors.grey.shade400 : AppTheme.blackAccent,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              elevation: 5,
+                              elevation: widget.product.stock <= 0 ? 0 : 5,
                             ),
                             child: _isCheckoutProcessing
                                 ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text(
-                                    'Buy Now',
-                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                                : Text(
+                                    widget.product.stock <= 0 ? 'Out of Stock' : 'Buy Now',
+                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                                   ),
                           ),
                         ),

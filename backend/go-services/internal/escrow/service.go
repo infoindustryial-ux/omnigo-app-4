@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ func getHoldDuration() time.Duration {
 			return time.Duration(hours) * time.Hour
 		}
 	}
-	return 48 * time.Hour
+	return 7 * 24 * time.Hour // 7-day (1 week) default vendor payout hold
 }
 
 // Service manages escrow holds and releases.
@@ -527,6 +528,95 @@ func (s *Service) RefundDispute(ctx context.Context, disputeID uuid.UUID) error 
 	// Remove from Redis index only after successful DB commit
 	_ = s.index.Remove(ctx, hold.ID.String())
 
+	return nil
+}
+
+// RefundPartialDispute refunds a specific partial amount (e.g. for damaged/missing items)
+// to the customer wallet and leaves the remainder in escrow for the vendor.
+func (s *Service) RefundPartialDispute(ctx context.Context, disputeID uuid.UUID, partialAmountPaisa int64) error {
+	var hold EscrowHold
+	err := s.db.QueryRow(ctx,
+		`SELECT id, order_tracking_id, vendor_tracking_id, amount, status, hold_until, created_at
+		 FROM escrow_holds WHERE dispute_id = $1 AND status = 'disputed'`,
+		disputeID,
+	).Scan(&hold.ID, &hold.OrderTrackingID, &hold.VendorTrackingID, &hold.Amount, &hold.Status, &hold.HoldUntil, &hold.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("escrow hold not found or not in disputed status: %w", err)
+	}
+
+	if partialAmountPaisa <= 0 {
+		return fmt.Errorf("partial refund amount must be positive")
+	}
+	if partialAmountPaisa >= hold.Amount {
+		// Full refund
+		return s.RefundDispute(ctx, disputeID)
+	}
+
+	// Fetch customer tracking ID from orders
+	var customerTrackingID string
+	err = s.db.QueryRow(ctx,
+		`SELECT customer_tracking_id FROM orders WHERE order_tracking_id = $1`,
+		hold.OrderTrackingID,
+	).Scan(&customerTrackingID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch order customer: %w", err)
+	}
+
+	// STEP 1: Execute partial ledger transfer
+	idempotencyKey := fmt.Sprintf("escrow:partial_refund:%s:%d", disputeID.String(), partialAmountPaisa)
+	_, err = s.ledger.Transfer(ctx, ledger.TransferRequest{
+		DebitAccount:   ledger.AccountVendorLockedEscrow,
+		CreditAccount:  ledger.AccountCustomerWallet,
+		Amount:         partialAmountPaisa,
+		Currency:       "PKR",
+		ReferenceType:  "dispute_partial_refund",
+		ReferenceID:    hold.OrderTrackingID,
+		Description:    fmt.Sprintf("Item dispute partial refund for order %s to customer %s", hold.OrderTrackingID, customerTrackingID),
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		return fmt.Errorf("ledger partial refund transfer failed: %w", err)
+	}
+
+	// STEP 2: Database transaction: deduct from hold amount, set status back to 'held' for vendor release
+	tx, txErr := s.db.Begin(ctx)
+	if txErr != nil {
+		return fmt.Errorf("failed to begin transaction: %w", txErr)
+	}
+	defer tx.Rollback(ctx)
+
+	remainingAmount := hold.Amount - partialAmountPaisa
+	_, err = tx.Exec(ctx,
+		`UPDATE escrow_holds SET amount = $1, status = 'held', updated_at = NOW() WHERE id = $2`,
+		remainingAmount, hold.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update escrow hold balance: %w", err)
+	}
+
+	// Update customer wallet balance
+	upsertQuery := `
+		INSERT INTO customer_wallet (customer_tracking_id, balance_paisa, lifetime_spent_paisa, updated_at)
+		VALUES ($1, $2, 0, NOW())
+		ON CONFLICT (customer_tracking_id)
+		DO UPDATE SET
+			balance_paisa = customer_wallet.balance_paisa + $2,
+			updated_at = NOW()
+	`
+	_, err = tx.Exec(ctx, upsertQuery, customerTrackingID, partialAmountPaisa)
+	if err != nil {
+		return fmt.Errorf("failed to credit customer wallet for partial refund: %w", err)
+	}
+
+	// Mark dispute resolved
+	_, _ = tx.Exec(ctx, `UPDATE disputes SET status = 'resolved', updated_at = NOW() WHERE id = $1`, disputeID)
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit partial refund: %w", err)
+	}
+
+	log.Printf("[Escrow] Partial dispute refund executed: %d paisa to customer %s, remaining %d paisa held for vendor %s",
+		partialAmountPaisa, customerTrackingID, remainingAmount, hold.VendorTrackingID)
 	return nil
 }
 

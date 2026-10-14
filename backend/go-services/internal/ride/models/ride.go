@@ -16,10 +16,28 @@ type Ride struct {
 	Status               string    `json:"status"` // requested, accepted, in_progress, completed
 	AdminCommission      float64   `json:"admin_commission"`
 	FareAmount           float64   `json:"fare_amount"`
+	PaymentMethod        string    `json:"payment_method"` // cash, wallet, safepay
+	Rating               float64   `json:"rating,omitempty"`
+	RatingComment        string    `json:"rating_comment,omitempty"`
+	TipAmount            float64   `json:"tip_amount,omitempty"`
 	ActualDistanceMeters float64   `json:"actual_distance_meters,omitempty"`
 	ActualDurationSecs  float64   `json:"actual_duration_seconds,omitempty"`
+	NearbyRidersCount    int       `json:"nearby_riders_count"`
+	SearchRadiusKm       float64   `json:"search_radius_km"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// NearbyRiderInfo represents an active driver located near a customer.
+type NearbyRiderInfo struct {
+	RiderTrackingID string  `json:"rider_tracking_id"`
+	FullName        string  `json:"full_name"`
+	VehicleType     string  `json:"vehicle_type"`
+	VehiclePlate    string  `json:"vehicle_plate"`
+	Rating          string  `json:"rating"`
+	Latitude        float64 `json:"latitude"`
+	Longitude       float64 `json:"longitude"`
+	DistanceKm      float64 `json:"distance_km"`
 }
 
 // RequestRidePayload is used when a customer requests a ride.
@@ -36,6 +54,7 @@ type RequestRidePayload struct {
 	DropoffLat      float64 `json:"dropoff_lat" binding:"required"`
 	DropoffLng      float64 `json:"dropoff_lng" binding:"required"`
 	FareAmount      float64 `json:"fare_amount"`
+	PaymentMethod   string  `json:"payment_method"` // cash, wallet, safepay
 }
 
 // AcceptRidePayload is sent by the rider when they accept a ride offer.
@@ -48,7 +67,7 @@ type AcceptRidePayload struct {
 // RiderTrackID is overridden from JWT (ride_handler.go:132).
 type UpdateRideStatusPayload struct {
 	RiderTrackID string `json:"rider_tracking_id"`
-	Status       string `json:"status" binding:"required,oneof=in_progress cancelled"`
+	Status       string `json:"status" binding:"required,oneof=arrived in_progress cancelled"`
 }
 
 // CompleteRidePayload is sent by the rider at the end of the ride.
@@ -58,7 +77,7 @@ type CompleteRidePayload struct {
 	FinalFare       float64 `json:"final_fare" binding:"required,gt=0"`
 	DistanceMeters  float64 `json:"distance_meters"`
 	DurationSeconds int     `json:"duration_seconds"`
-	PaymentMethod   string  `json:"payment_method" binding:"required,oneof=cash wallet stripe"`
+	PaymentMethod   string  `json:"payment_method" binding:"required,oneof=cash wallet stripe safepay card"`
 }
 
 // CancelRidePayload is sent by the customer (or the rider) to cancel
@@ -125,4 +144,12 @@ type SubmitBidPayload struct {
 type AcceptBidPayload struct {
 	CustomerTrackID string `json:"customer_tracking_id"`
 	BidID           int    `json:"bid_id" binding:"required"`
+}
+
+// RateRidePayload is sent by the customer to rate the completed ride and optionally leave a tip.
+type RateRidePayload struct {
+	CustomerTrackID string  `json:"customer_tracking_id"`
+	Rating          float64 `json:"rating" binding:"required,min=1,max=5"`
+	Comment         string  `json:"comment"`
+	TipAmount       float64 `json:"tip_amount"`
 }

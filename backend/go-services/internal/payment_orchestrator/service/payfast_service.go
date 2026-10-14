@@ -1337,17 +1337,23 @@ func (s *PayFastService) MarkPaymentGatewayPending(ctx context.Context, internal
 
 // IPNParams holds the fields PayFast sends as query-string parameters when it POSTs/GETs an
 // Instant Payment Notification (IPN) to the merchant's registered checkout_url.
-// Supports flexible naming across PayFast APPS documentation variants.
+// Supports flexible naming across PayFast APPS documentation variants (JSON, URL form, query params).
 type IPNParams struct {
-	BasketID       string `form:"basket_id"`
-	BasketIDAlt    string `form:"Basket_ID"`
-	OrderID        string `form:"order_id"`
-	StatusCode     string `form:"status_code"` // this is the "payfast_err_code" the hash formula refers to
-	ErrCode        string `form:"err_code"`
-	TransactionID  string `form:"transaction_id"`
-	TxnAmt         string `form:"txnamt"`
-	SecuredHash    string `form:"secured_hash"`
-	ValidationHash string `form:"validation_hash"`
+	BasketID       string `form:"basket_id" json:"basket_id"`
+	BasketIDAlt    string `form:"Basket_ID" json:"Basket_ID"`
+	BasketIDUpper  string `form:"BASKET_ID" json:"BASKET_ID"`
+	OrderID        string `form:"order_id" json:"order_id"`
+	StatusCode     string `form:"status_code" json:"status_code"` // this is the "payfast_err_code" the hash formula refers to
+	ErrCode        string `form:"err_code" json:"err_code"`
+	ErrCodeUpper   string `form:"ERR_CODE" json:"ERR_CODE"`
+	ErrMsg         string `form:"err_msg" json:"err_msg"`
+	TransactionID  string `form:"transaction_id" json:"transaction_id"`
+	TxnAmt         string `form:"txnamt" json:"txnamt"`
+	Amount         string `form:"amount" json:"amount"`
+	TxnAmount      string `form:"transaction_amount" json:"transaction_amount"`
+	SecuredHash    string `form:"secured_hash" json:"secured_hash"`
+	ValidationHash string `form:"validation_hash" json:"validation_hash"`
+	HashUpper      string `form:"VALIDATION_HASH" json:"VALIDATION_HASH"`
 }
 
 func (p *IPNParams) NormalizedBasketID() string {
@@ -1357,6 +1363,9 @@ func (p *IPNParams) NormalizedBasketID() string {
 	if p.BasketIDAlt != "" {
 		return p.BasketIDAlt
 	}
+	if p.BasketIDUpper != "" {
+		return p.BasketIDUpper
+	}
 	return p.OrderID
 }
 
@@ -1364,14 +1373,20 @@ func (p *IPNParams) NormalizedStatusCode() string {
 	if p.StatusCode != "" {
 		return p.StatusCode
 	}
-	return p.ErrCode
+	if p.ErrCode != "" {
+		return p.ErrCode
+	}
+	return p.ErrCodeUpper
 }
 
 func (p *IPNParams) NormalizedHash() string {
-	if p.SecuredHash != "" {
-		return p.SecuredHash
+	if p.ValidationHash != "" {
+		return p.ValidationHash
 	}
-	return p.ValidationHash
+	if p.HashUpper != "" {
+		return p.HashUpper
+	}
+	return p.SecuredHash
 }
 
 // HandleIPN processes an Instant Payment Notification from PayFast's checkout_url webhook.
@@ -1384,7 +1399,14 @@ func (s *PayFastService) HandleIPN(ctx context.Context, params IPNParams) error 
 	var eventID string
 	payloadJSON, _ := json.Marshal(params)
 	var txnAmt float64
-	fmt.Sscanf(params.TxnAmt, "%f", &txnAmt)
+	amtStr := params.TxnAmt
+	if amtStr == "" {
+		amtStr = params.Amount
+	}
+	if amtStr == "" {
+		amtStr = params.TxnAmount
+	}
+	fmt.Sscanf(amtStr, "%f", &txnAmt)
 	err := s.db.QueryRow(ctx,
 		`INSERT INTO payfast_events (basket_id, gateway_txn_id, event_type, status_code, amount, payload, order_id)
 		 VALUES ($1, NULLIF($2,''), 'ipn_received', NULLIF($3,''), NULLIF($4,0)::NUMERIC, $5, NULLIF($6,''))
@@ -1743,9 +1765,13 @@ func (s *PayFastService) settleCODDebt(ctx context.Context, codDebtID, orderTrac
 		return fmt.Errorf("failed to update COD debt status: %w", err)
 	}
 
-	// 4. Decrement rider cash_in_hand
+	// 4. Decrement rider cash_in_hand and auto-unblock if below 5000 PKR threshold
 	_, err = tx.Exec(ctx,
-		`UPDATE rider_wallet SET cash_in_hand_paisa = GREATEST(0, cash_in_hand_paisa - $1), updated_at = NOW() WHERE rider_tracking_id = $2`,
+		`UPDATE rider_wallet 
+		 SET cash_in_hand_paisa = GREATEST(0, cash_in_hand_paisa - $1),
+		     is_cash_blocked = (GREATEST(0, cash_in_hand_paisa - $1) >= 500000),
+		     updated_at = NOW() 
+		 WHERE rider_tracking_id = $2`,
 		amountOwedPaisa, riderTrackingID,
 	)
 	if err != nil {

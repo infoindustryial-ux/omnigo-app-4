@@ -29,10 +29,13 @@ func (r *DeliveryRepository) DB() *pgxpool.Pool {
 }
 
 var validGigTransitions = map[string][]string{
-	models.StatusBroadcasting: {models.StatusAccepted},
-	models.StatusAccepted:     {models.StatusPickedUp, models.StatusFailed, models.StatusBroadcasting},
-	models.StatusPickedUp:     {models.StatusInTransit, models.StatusFailed},
-	models.StatusInTransit:    {models.StatusCompleted, models.StatusFailed},
+	models.StatusBroadcasting:     {models.StatusAccepted, models.StatusCancelled},
+	models.StatusAccepted:         {models.StatusPickedUp, models.StatusFailed, models.StatusBroadcasting, models.StatusCancelled},
+	models.StatusPickedUp:         {models.StatusInTransit, models.StatusFailed, models.StatusBreakdownPending},
+	models.StatusInTransit:        {models.StatusArrivedAtDropoff, models.StatusCompleted, models.StatusFailed, models.StatusBreakdownPending},
+	models.StatusBreakdownPending: {models.StatusBroadcasting, models.StatusAccepted, models.StatusFailed},
+	models.StatusArrivedAtDropoff: {models.StatusCompleted, models.StatusFailed, models.StatusReturnedToVendor},
+	models.StatusReturnedToVendor: {models.StatusCompleted},
 }
 
 func NewDeliveryRepository(writer, reader *pgxpool.Pool, redisClient redis.UniversalClient) *DeliveryRepository {
@@ -702,21 +705,110 @@ func (r *DeliveryRepository) UpdateGigStatus(ctx context.Context, trackingID str
 		return "", assignedRider, fmt.Errorf("failed to update gig status: %v", err)
 	}
 
-	// CLAIM-4 FIX: Atomically credit the rider wallet in the exact same transaction
-	// to prevent race conditions or missed payments if the server crashes right after
-	// the status update.
-	if status == models.StatusCompleted && riderEarning > 0 && assignedRider != "" {
-		upsertWallet := `
-			INSERT INTO rider_wallet (rider_tracking_id, balance_paisa, lifetime_earnings_paisa, updated_at)
-			VALUES ($1, $2, $2, NOW())
-			ON CONFLICT (rider_tracking_id)
-			DO UPDATE SET
-				balance_paisa = rider_wallet.balance_paisa + $2,
-				lifetime_earnings_paisa = rider_wallet.lifetime_earnings_paisa + $2,
-				updated_at = NOW()
-		`
-		if _, err := tx.Exec(ctx, upsertWallet, assignedRider, riderEarning); err != nil {
-			return "", assignedRider, fmt.Errorf("failed to credit rider wallet atomically: %v", err)
+	// CLAIM-4 FIX & AUTOMATED DEBT NETTING:
+	// Atomically check for pending COD debts. If rider owes COD debt, earnings
+	// auto-settle the debt first (netting), decrement cash_in_hand, and only credit surplus
+	// as withdrawable balance. Always increments lifetime_earnings.
+	if (status == models.StatusCompleted || status == models.StatusReturnedToVendor) && riderEarning > 0 && assignedRider != "" {
+		riderEarningPaisa := int64(math.Round(riderEarning * 100))
+
+		// Ensure wallet exists
+		_, _ = tx.Exec(ctx, `
+			INSERT INTO rider_wallet (rider_tracking_id, balance_paisa, cash_in_hand_paisa, lifetime_earnings_paisa, updated_at)
+			VALUES ($1, 0, 0, 0, NOW())
+			ON CONFLICT (rider_tracking_id) DO NOTHING
+		`, assignedRider)
+
+		var currentBalance, currentCashInHand, lifetimeEarnings int64
+		_ = tx.QueryRow(ctx, `
+			SELECT COALESCE(balance_paisa, 0), COALESCE(cash_in_hand_paisa, 0), COALESCE(lifetime_earnings_paisa, 0)
+			FROM rider_wallet
+			WHERE rider_tracking_id = $1
+			FOR UPDATE
+		`, assignedRider).Scan(&currentBalance, &currentCashInHand, &lifetimeEarnings)
+
+		// Query pending COD debts in FIFO order
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, COALESCE(amount_owed_paisa, ROUND(amount_owed * 100)::bigint, 0)
+			FROM cod_debts
+			WHERE rider_tracking_id = $1 AND status = 'pending' AND (amount_owed_paisa > 0 OR amount_owed > 0)
+			ORDER BY created_at ASC
+			FOR UPDATE
+		`, assignedRider)
+
+		type pendingDebt struct {
+			id        string
+			owedPaisa int64
+		}
+		var debts []pendingDebt
+
+		if qErr == nil {
+			for rows.Next() {
+				var pd pendingDebt
+				if scanErr := rows.Scan(&pd.id, &pd.owedPaisa); scanErr == nil && pd.owedPaisa > 0 {
+					debts = append(debts, pd)
+				}
+			}
+			rows.Close()
+		}
+
+		remainingToSettle := riderEarningPaisa
+		var nettedDebt int64 = 0
+		for _, d := range debts {
+			if remainingToSettle <= 0 {
+				break
+			}
+			if remainingToSettle >= d.owedPaisa {
+				_, _ = tx.Exec(ctx, `
+					UPDATE cod_debts
+					SET amount_owed_paisa = 0,
+					    amount_owed = 0,
+					    status = 'settled',
+					    settled_via = 'delivery_earning_netting',
+					    settled_at = NOW()
+					WHERE id = $1
+				`, d.id)
+				nettedDebt += d.owedPaisa
+				remainingToSettle -= d.owedPaisa
+			} else {
+				newOwed := d.owedPaisa - remainingToSettle
+				newOwedRupees := float64(newOwed) / 100.0
+				_, _ = tx.Exec(ctx, `
+					UPDATE cod_debts
+					SET amount_owed_paisa = $1,
+					    amount_owed = $2,
+					    updated_at = NOW()
+					WHERE id = $3
+				`, newOwed, newOwedRupees, d.id)
+				nettedDebt += remainingToSettle
+				remainingToSettle = 0
+			}
+		}
+
+		withdrawableCredit := remainingToSettle
+		newCashInHand := int64(math.Max(0, float64(currentCashInHand-nettedDebt)))
+
+		cashThresholdPaisa := int64(500000) // Default PKR 5,000 (500,000 paisa)
+		if v := os.Getenv("RIDER_CASH_BLOCK_THRESHOLD"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cashThresholdPaisa = int64(math.Round(f * 100))
+			}
+		}
+		isBlocked := newCashInHand >= cashThresholdPaisa
+
+		newBalance := currentBalance + withdrawableCredit
+		newLifetime := lifetimeEarnings + riderEarningPaisa
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE rider_wallet
+			SET balance_paisa = $1,
+			    cash_in_hand_paisa = $2,
+			    lifetime_earnings_paisa = $3,
+			    is_cash_blocked = $4,
+			    updated_at = NOW()
+			WHERE rider_tracking_id = $5
+		`, newBalance, newCashInHand, newLifetime, isBlocked, assignedRider); err != nil {
+			return "", assignedRider, fmt.Errorf("failed to update rider wallet atomically: %v", err)
 		}
 	}
 

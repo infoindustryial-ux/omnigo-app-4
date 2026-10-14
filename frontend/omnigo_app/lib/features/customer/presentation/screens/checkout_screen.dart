@@ -14,8 +14,8 @@ import '../../../../core/services/cart_provider.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/di/service_locator.dart';
+import '../../../../core/services/payfast_service.dart';
 import '../../../shared/presentation/widgets/map_libre_map_widget.dart';
-import '../widgets/payfast_card_sheet.dart';
 import 'vendor_chat_selector_screen.dart';
 import 'order_success_screen.dart';
 
@@ -297,6 +297,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     if (errStr.contains('socketexception') || errStr.contains('timeout') || errStr.contains('connection')) {
       return 'Network error. Please check your internet connection and try again.';
+    }
+    if (errStr.contains('out_of_stock') || errStr.contains('out of stock')) {
+      return 'One or more items in your cart are currently out of stock. Please remove them to proceed.';
+    }
+    if (errStr.contains('insufficient_stock') || errStr.contains('insufficient stock')) {
+      return 'Requested quantity exceeds available stock. Please adjust quantities.';
     }
     if (errStr.contains('insufficient')) {
       return 'Insufficient wallet balance for this purchase.';
@@ -638,110 +644,44 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           final userMsg = _getUserFriendlyError(e, 'Wallet payment failed. Please try again.');
           throw Exception(userMsg);
         }
-      } else if (_selectedPaymentMethod == 'payfast') {
-        // Collect card details from user (Option C Tokenized Flow)
-        final cardDetails = await showPayFastCardDetailsSheet(context);
-        if (cardDetails == null) {
-          // User cancelled card entry
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
+      } else if (_selectedPaymentMethod == 'safepay' || _selectedPaymentMethod == 'payfast') {
+        // Official PayFast Flutter SDK Flow (Redirection WebView)
+        final payfastService = sl<PayfastService>();
+        final pfResult = await payfastService.processPayment(
+          context: context,
+          basketId: realOrderTrackingId.toString(),
+          amount: cart.totalAmount + _deliveryFee,
+          description: 'OMNIGO Order #$realOrderTrackingId',
+        );
 
-        final payfastResponse = await apiClient.post(
-          ApiEndpoints.payfastPayment(),
-          {
-            'order_id': realOrderTrackingId,
-            // account_type_id intentionally omitted — the orchestrator derives
-            // it from the supplied instrument (card vs bank/wallet).
-            'card_number': cardDetails['card_number'],
-            'expiry_month': cardDetails['expiry_month'],
-            'expiry_year': cardDetails['expiry_year'],
-            'cvv': cardDetails['cvv'],
-            'customer_mobile_no': cardDetails['customer_mobile_no'],
-          },
-          idempotencyKey: 'checkout_payfast_$_checkoutSessionNonce',
-        ) as Map<String, dynamic>;
-
-        // Check for already paid error in response
-        final errorMsg = payfastResponse['error']?.toString() ?? '';
-        if (errorMsg.contains('already paid')) {
-          // Order already paid - show success instead of error
-          await cart.clearCart();
-          if (mounted) {
-            await Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => OrderSuccessScreen(trackingId: realOrderTrackingId.toString()),
-              ),
-              (route) => route.isFirst,
-            );
-          }
-          return;
-        }
-
-        final status = payfastResponse['status']?.toString();
-        if (status == 'failed') {
-          await _cancelOrderOnFailure(realOrderTrackingId.toString(), 'PayFast payment failed');
-          throw Exception(_getUserFriendlyError(payfastResponse['message'], 'Payment failed. Please try a different payment method.'));
-        }
-
-        // Handle 3DS Challenge or Hosted Portal redirect via in-app WebView
-        if (status == '3ds_redirect' || status == 'hosted_redirect') {
-          final threedHtml = payfastResponse['threed_html']?.toString() ?? '';
-          final redirectUrl = payfastResponse['redirect_url']?.toString();
-          if ((threedHtml.isNotEmpty || (redirectUrl != null && redirectUrl.isNotEmpty)) && mounted) {
-            final verified = await showPayFast3DSChallenge(
-              context,
-              threedHtml,
-              redirectUrl: redirectUrl,
-            );
-
-            // Enterprise fail-safe: verify actual order payment status from backend
-            // even if the user closed the dialog manually, in case the webhook succeeded.
-            bool isOrderPaid = false;
-            try {
-              final orderCheck = await apiClient.get(
-                ApiEndpoints.orderDetail(realOrderTrackingId.toString()),
-              ) as Map<String, dynamic>;
-              final pStatus = (orderCheck['payment_status'] ?? orderCheck['status'])?.toString().toLowerCase();
-              if (pStatus == 'paid' || pStatus == 'confirmed' || pStatus == 'settlement_pending') {
-                isOrderPaid = true;
-              }
-            } catch (e) {
-              // Payment verification failed — do NOT cancel the order blindly.
-              // The payment may have succeeded but the status check timed out.
-              debugPrint('Payment verification failed: $e');
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Could not verify payment status: $e. Please check your orders.')),
-                );
-              }
-              return; // Exit without cancelling — let the user check manually
+        if (pfResult.isCancelled) {
+          // Enterprise fail-safe: check if order was actually marked paid via IPN before cancelling
+          bool isOrderPaid = false;
+          try {
+            final orderCheck = await apiClient.get(
+              ApiEndpoints.orderDetail(realOrderTrackingId.toString()),
+            ) as Map<String, dynamic>;
+            final pStatus = (orderCheck['payment_status'] ?? orderCheck['status'])?.toString().toLowerCase();
+            if (pStatus == 'paid' || pStatus == 'confirmed' || pStatus == 'settlement_pending') {
+              isOrderPaid = true;
             }
+          } catch (e) {
+            debugPrint('Payment verification check error: $e');
+          }
 
-            if (!verified && !isOrderPaid) {
-              await _cancelOrderOnFailure(realOrderTrackingId.toString(), 'Payment verification not completed');
-              throw Exception('Payment verification was not completed. Please try again.');
+          if (!isOrderPaid) {
+            await _cancelOrderOnFailure(realOrderTrackingId.toString(), 'Payment window closed');
+            if (mounted) {
+              setState(() => _isLoading = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('PayFast payment was cancelled or closed.')),
+              );
             }
+            return;
           }
-        }
-
-        // Deferred outcomes: money may not be captured yet — inform the user instead
-        // of showing an unconditional success screen.
-        if (status == 'gateway_pending' || status == 'in_progress') {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Payment is processing at the gateway. Your order will update automatically once it completes.'),
-                duration: Duration(seconds: 5),
-              ),
-            );
-          }
-        }
-
-        // Settlement pending or success - proceed to poll for order confirmation
-        if (status == 'settlement_pending' || status == 'success' || status == 'approved') {
-          // Payment authorized, proceed to confirmation polling
+        } else if (!pfResult.success) {
+          await _cancelOrderOnFailure(realOrderTrackingId.toString(), pfResult.errorMessage ?? 'PayFast payment failed');
+          throw Exception(_getUserFriendlyError(pfResult.errorMessage, 'Payment failed. Please try a different payment method.'));
         }
       } else if (_selectedPaymentMethod == 'jazzcash' || _selectedPaymentMethod == 'easypaisa') {
         // JazzCash / EasyPaisa hosted checkout flow
@@ -1177,7 +1117,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 content: Column(
                   children: [
                     _buildPaymentOption('cod', 'Cash on Delivery', Icons.money),
-                    _buildPaymentOption('payfast', 'PayFast (Debit/Credit Card & Bank)', Icons.payment_outlined),
+                    _buildPaymentOption('payfast', 'PayFast (Debit/Credit Card, Bank & Wallets)', Icons.security),
                     _buildPaymentOption('card', 'Credit/Debit Card (International)', Icons.credit_card),
                     _buildPaymentOption('wallet', 'Wallet Balance', Icons.account_balance_wallet),
                     _buildPaymentOption('easypaisa', 'EasyPaisa (Mobile Account)', Icons.account_balance_wallet),

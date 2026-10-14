@@ -21,11 +21,22 @@ func NewRideRepository(writer, reader *pgxpool.Pool) *RideRepository {
 	}
 }
 
+func (r *RideRepository) GetWriter() *pgxpool.Pool {
+	return r.writer
+}
+
+func (r *RideRepository) GetReader() *pgxpool.Pool {
+	return r.reader
+}
+
 // CreateRide inserts a new ride request into PostgreSQL
 func (r *RideRepository) CreateRide(ctx context.Context, ride *models.Ride) error {
+	if ride.PaymentMethod == "" {
+		ride.PaymentMethod = "cash"
+	}
 	query := `
-		INSERT INTO rides (tracking_id, customer_tracking_id, status, admin_commission, fare_amount, vehicle_type, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
-		VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO rides (tracking_id, customer_tracking_id, status, admin_commission, fare_amount, vehicle_type, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, payment_method)
+		VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at, updated_at
 	`
 	err := r.writer.QueryRow(ctx, query,
@@ -38,6 +49,7 @@ func (r *RideRepository) CreateRide(ctx context.Context, ride *models.Ride) erro
 		ride.PickupLng,
 		ride.DropoffLat,
 		ride.DropoffLng,
+		ride.PaymentMethod,
 	).Scan(&ride.ID, &ride.CreatedAt, &ride.UpdatedAt)
 
 	return err
@@ -48,6 +60,8 @@ func (r *RideRepository) GetRideByTrackingID(ctx context.Context, trackingID str
 	query := `
 		SELECT id, tracking_id, customer_tracking_id, rider_tracking_id, status, admin_commission, fare_amount,
 			vehicle_type, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+			COALESCE(payment_method, 'cash'),
+			COALESCE(rating, 0.0), COALESCE(rating_comment, ''), COALESCE(tip_amount, 0.0),
 			COALESCE(actual_distance_meters, 0.0), COALESCE(actual_duration_seconds, 0.0),
 			created_at, updated_at
 		FROM rides
@@ -60,6 +74,8 @@ func (r *RideRepository) GetRideByTrackingID(ctx context.Context, trackingID str
 		&ride.ID, &ride.TrackingID, &ride.CustomerTrackID, &riderID,
 		&ride.Status, &ride.AdminCommission, &ride.FareAmount, &ride.VehicleType,
 		&ride.PickupLat, &ride.PickupLng, &ride.DropoffLat, &ride.DropoffLng,
+		&ride.PaymentMethod,
+		&ride.Rating, &ride.RatingComment, &ride.TipAmount,
 		&ride.ActualDistanceMeters, &ride.ActualDurationSecs,
 		&ride.CreatedAt, &ride.UpdatedAt,
 	)
@@ -127,10 +143,11 @@ func (r *RideRepository) UpdateRideStatus(ctx context.Context, trackingID, rider
 		  AND (
 		        (status = 'requested' AND $4::text = 'cancelled' AND rider_tracking_id IS NULL)
 		     OR (rider_tracking_id = $3 AND (
-		          (status = 'accepted'    AND $4::text IN ('in_progress', 'cancelled'))
+		          (status = 'accepted'    AND $4::text IN ('arrived', 'in_progress', 'cancelled'))
+		       OR (status = 'arrived'     AND $4::text IN ('in_progress', 'cancelled'))
 		       OR (status = 'in_progress' AND $4::text IN ('completed',  'cancelled'))
 		     ))
-		     OR ($4::text = 'cancelled' AND customer_tracking_id = $3 AND status IN ('requested', 'accepted'))
+		     OR ($4::text = 'cancelled' AND customer_tracking_id = $3 AND status IN ('requested', 'accepted', 'arrived'))
 		  )
 	`
 	tag, err := r.writer.Exec(ctx, query, newStatus, trackingID, riderTrackID, newStatus)
@@ -291,3 +308,50 @@ func (r *RideRepository) AcceptBid(ctx context.Context, rideTrackID string, bidI
 
 	return &bid, nil
 }
+
+// BumpFare increases the fare amount for a ride in 'requested' status.
+func (r *RideRepository) BumpFare(ctx context.Context, trackingID, customerTrackID string, increaseAmount float64) (*models.Ride, error) {
+	query := `
+		UPDATE rides
+		SET fare_amount = fare_amount + $1, updated_at = NOW()
+		WHERE tracking_id = $2 AND customer_tracking_id = $3 AND status = 'requested'
+		RETURNING id, tracking_id, customer_tracking_id, rider_tracking_id, status, admin_commission, fare_amount,
+			vehicle_type, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+			COALESCE(actual_distance_meters, 0.0), COALESCE(actual_duration_seconds, 0.0),
+			created_at, updated_at
+	`
+	var ride models.Ride
+	var riderID *string
+	err := r.writer.QueryRow(ctx, query, increaseAmount, trackingID, customerTrackID).Scan(
+		&ride.ID, &ride.TrackingID, &ride.CustomerTrackID, &riderID,
+		&ride.Status, &ride.AdminCommission, &ride.FareAmount, &ride.VehicleType,
+		&ride.PickupLat, &ride.PickupLng, &ride.DropoffLat, &ride.DropoffLng,
+		&ride.ActualDistanceMeters, &ride.ActualDurationSecs,
+		&ride.CreatedAt, &ride.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bump fare or ride not in requested status: %w", err)
+	}
+	if riderID != nil {
+		ride.RiderTrackID = *riderID
+	}
+	return &ride, nil
+}
+
+// SaveRideRating records the customer's rating, comment, and tip.
+func (r *RideRepository) SaveRideRating(ctx context.Context, trackingID, customerTrackID string, rating float64, comment string, tip float64) error {
+	query := `
+		UPDATE rides
+		SET rating = $1, rating_comment = $2, tip_amount = $3, updated_at = NOW()
+		WHERE tracking_id = $4 AND customer_tracking_id = $5 AND status = 'completed'
+	`
+	cmdTag, err := r.writer.Exec(ctx, query, rating, comment, tip, trackingID, customerTrackID)
+	if err != nil {
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return fmt.Errorf("ride not found or not in completed status")
+	}
+	return nil
+}
+

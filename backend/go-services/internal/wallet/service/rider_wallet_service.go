@@ -6,11 +6,13 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/omnigo/backend/internal/ledger"
+	"github.com/omnigo/backend/internal/payment/safepay"
 	"github.com/omnigo/backend/internal/shared/money"
 )
 
@@ -296,9 +298,12 @@ type RiderWithdrawalRequest struct {
 	RiderTrackingID string  `json:"rider_tracking_id"`
 	Amount          float64 `json:"amount"`
 	AmountPaisa     int64   `json:"amount_paisa"`
-	Method          string  `json:"method"` // easypaisa, jazzcash, bank_transfer
+	Method          string  `json:"method"` // easypaisa, jazzcash, bank_transfer, raast
 	AccountNumber   string  `json:"account_number"`
 	AccountTitle    string  `json:"account_title"`
+	BeneficiaryIBAN string  `json:"beneficiary_iban"`
+	RaastID         string  `json:"raast_id"`
+	BankName        string  `json:"bank_name"`
 }
 
 // RiderWithdrawalResponse is returned after a cash-out request is created.
@@ -315,7 +320,7 @@ type RiderWithdrawalResponse struct {
 }
 
 // RequestWithdrawal initiates a withdrawal request for the rider, locking the wallet row,
-// ensuring no COD block or float exceeds threshold, and deducting the balance atomically.
+// ensuring no COD block, float, or pending COD debt blocks it, and deducting the balance atomically.
 func (s *RiderWalletService) RequestWithdrawal(ctx context.Context, req RiderWithdrawalRequest) (*RiderWithdrawalResponse, error) {
 	if req.AmountPaisa <= 0 && req.Amount > 0 {
 		req.AmountPaisa = money.RupeesToPaisa(req.Amount)
@@ -328,6 +333,18 @@ func (s *RiderWalletService) RequestWithdrawal(ctx context.Context, req RiderWit
 	minWithdrawalPaisa := int64(math.Round(envFloat("RIDER_MIN_WITHDRAWAL_PKR", 500.0) * 100))
 	if req.AmountPaisa < minWithdrawalPaisa {
 		return nil, fmt.Errorf("minimum withdrawal amount is PKR %.2f", float64(minWithdrawalPaisa)/100.0)
+	}
+
+	// Validate IBAN if method is bank_transfer or IBAN is supplied
+	if req.BeneficiaryIBAN == "" && req.AccountNumber != "" && strings.HasPrefix(strings.ToUpper(strings.TrimSpace(req.AccountNumber)), "PK") {
+		req.BeneficiaryIBAN = req.AccountNumber
+	}
+	if req.BeneficiaryIBAN != "" {
+		sanitizedIBAN := safepay.SanitizeIBAN(req.BeneficiaryIBAN)
+		if err := safepay.ValidatePakistaniIBAN(sanitizedIBAN); err != nil {
+			return nil, fmt.Errorf("invalid Pakistani IBAN: %w", err)
+		}
+		req.BeneficiaryIBAN = sanitizedIBAN
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -352,6 +369,16 @@ func (s *RiderWalletService) RequestWithdrawal(ctx context.Context, req RiderWit
 
 	if isCashBlocked {
 		return nil, fmt.Errorf("withdrawal blocked: rider has an active cash block")
+	}
+
+	// COD DEBT CHECK: Ensure rider does not have unsettled pending COD debt remittances
+	var pendingCODDebts int
+	err = tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM cod_debts WHERE rider_tracking_id = $1 AND status = 'pending'`,
+		req.RiderTrackingID,
+	).Scan(&pendingCODDebts)
+	if err == nil && pendingCODDebts > 0 {
+		return nil, fmt.Errorf("withdrawal blocked: rider has %d unsettled COD deliveries. Deposit pending COD cash first", pendingCODDebts)
 	}
 
 	cashThresholdPaisa := int64(math.Round(envFloat("RIDER_CASH_BLOCK_THRESHOLD", 5000.0) * 100))
@@ -382,9 +409,10 @@ func (s *RiderWalletService) RequestWithdrawal(ctx context.Context, req RiderWit
 	var createdAt time.Time
 	insertPayoutQuery := `
 		INSERT INTO rider_payouts (
-			id, rider_tracking_id, amount, amount_paisa, method, account_number, account_title, status, created_at, updated_at
+			id, rider_tracking_id, amount, amount_paisa, method, account_number, account_title,
+			beneficiary_iban, raast_id, bank_name, gateway, status, created_at, updated_at
 		) VALUES (
-			gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'pending', NOW(), NOW()
+			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'safepay', 'pending', NOW(), NOW()
 		)
 		RETURNING id::text, created_at
 	`
@@ -396,6 +424,9 @@ func (s *RiderWalletService) RequestWithdrawal(ctx context.Context, req RiderWit
 		req.Method,
 		req.AccountNumber,
 		req.AccountTitle,
+		req.BeneficiaryIBAN,
+		req.RaastID,
+		req.BankName,
 	).Scan(&payoutID, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to record rider payout: %w", err)
@@ -405,12 +436,12 @@ func (s *RiderWalletService) RequestWithdrawal(ctx context.Context, req RiderWit
 		return nil, fmt.Errorf("failed to commit withdrawal transaction: %w", err)
 	}
 
-	// Double-entry ledger transfer: rider_wallet → gateway_clearing
+	// Double-entry ledger transfer: rider_wallet → rider_bank_payout_account
 	if s.ledger != nil {
 		idempotencyKey := fmt.Sprintf("rider:payout:%s", payoutID)
 		if _, err := s.ledger.Transfer(ctx, ledger.TransferRequest{
 			DebitAccount:   ledger.AccountRiderWallet,
-			CreditAccount:  ledger.AccountGatewayClearing,
+			CreditAccount:  ledger.AccountRiderBankPayout,
 			Amount:         req.AmountPaisa,
 			Currency:       "PKR",
 			ReferenceType:  "rider_payout",

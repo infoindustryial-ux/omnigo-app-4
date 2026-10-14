@@ -17,6 +17,10 @@ func NewCartRepository(db *pgxpool.Pool) *CartRepository {
 	return &CartRepository{db: db}
 }
 
+func (r *CartRepository) DB() *pgxpool.Pool {
+	return r.db
+}
+
 // GetCart fetches the cart and its items for a specific user
 func (r *CartRepository) GetCart(ctx context.Context, userID string) (*models.Cart, error) {
 	queryCart := `SELECT id, user_id, store_id, COALESCE(total_amount, 0), created_at, updated_at FROM carts WHERE user_id = $1`

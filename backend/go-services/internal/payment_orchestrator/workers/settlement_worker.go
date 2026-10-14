@@ -18,6 +18,7 @@ import (
 	"github.com/omnigo/backend/internal/escrow"
 	"github.com/omnigo/backend/internal/ledger"
 	"github.com/omnigo/backend/internal/payment/payfast"
+	"github.com/omnigo/backend/internal/payment/safepay"
 	"github.com/omnigo/backend/internal/payment_orchestrator"
 	"github.com/omnigo/backend/internal/shared/telemetry"
 )
@@ -52,6 +53,7 @@ type SettlementWorker struct {
 	escrow     *escrow.Service
 	calculator *payment_orchestrator.CommissionCalculator
 	payfast    *payfast.Client
+	safepay    *safepay.Client
 	redis      redis.UniversalClient
 }
 
@@ -71,6 +73,11 @@ func NewSettlementWorker(
 		payfast:    payfastClient,
 		redis:      rdb,
 	}
+}
+
+// SetSafepayClient injects Safepay client for reconciliation of Safepay payments.
+func (w *SettlementWorker) SetSafepayClient(safepayClient *safepay.Client) {
+	w.safepay = safepayClient
 }
 
 // Start runs the settlement processing loop and gateway reconciliation loop.
@@ -296,15 +303,39 @@ func (w *SettlementWorker) processSingleSettlement(ctx context.Context, eventID 
 	defer tx.Rollback(ctx)
 
 	// 1. Lock/Update orders FIRST (Global lock order: orders -> payment_transactions)
-	// H4 FIX: Add status guard to prevent double-payment if same outbox event processed twice
+	// Guard against order resurrection: only transition if order is currently pending
 	result, err := tx.Exec(ctx,
-		`UPDATE orders SET status = 'paid', payment_status = 'paid', updated_at = NOW() WHERE order_tracking_id = $1 AND status != 'paid'`,
+		`UPDATE orders SET status = 'paid', payment_status = 'paid', updated_at = NOW()
+		 WHERE order_tracking_id = $1 AND status = 'pending'`,
 		payload.OrderID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update order to paid: %w", err)
 	}
 	if result.RowsAffected() == 0 {
+		// Check if the order is already cancelled or failed (e.g. by timeout worker)
+		var currentStatus string
+		_ = tx.QueryRow(ctx, "SELECT status FROM orders WHERE order_tracking_id = $1", payload.OrderID).Scan(&currentStatus)
+		if currentStatus == "cancelled" || currentStatus == "failed" {
+			log.Printf("[SettlementWorker] Order %s was cancelled/failed before settlement. Auto-routing to refund outbox.", payload.OrderID)
+			refundPayload, _ := json.Marshal(map[string]interface{}{
+				"order_id":      payload.OrderID,
+				"reason":        "settled_after_order_cancelled",
+				"refund_amount": float64(payload.TotalAmountPaisa) / 100.0,
+				"currency":      payload.Currency,
+				"refund_to":     "original",
+				"timestamp":     time.Now().UnixMilli(),
+			})
+			_, _ = tx.Exec(ctx,
+				`INSERT INTO outbox_events (aggregate_id, topic, payload, status, created_at, updated_at)
+				 VALUES ($1, 'payment_refund', $2::jsonb, 'PENDING', NOW(), NOW())`,
+				payload.OrderID, refundPayload,
+			)
+			_, _ = tx.Exec(ctx, `UPDATE payment_transactions SET status = 'captured', updated_at = NOW() WHERE transaction_id = $1`, payload.InternalTxnID)
+			_, _ = tx.Exec(ctx, `UPDATE outbox_events SET status = 'PROCESSED', processed_at = NOW() WHERE id = $1`, eventID)
+			_ = tx.Commit(ctx)
+			return nil
+		}
 		// Order already paid — skip silently (idempotent)
 		return nil
 	}
@@ -391,7 +422,7 @@ func (w *SettlementWorker) reconcileStuckPayments(ctx context.Context) {
 
 	// Lock stuck payments with FOR UPDATE SKIP LOCKED
 	rows, err := tx.Query(ctx,
-		`SELECT pt.transaction_id, pt.order_tracking_id, COALESCE(pt.gateway_txn_id, ''), pt.amount, pt.status, pt.created_at
+		`SELECT pt.transaction_id, pt.order_tracking_id, COALESCE(pt.gateway_txn_id, ''), pt.amount, pt.status, pt.created_at, COALESCE(pt.gateway, 'payfast')
 		 FROM payment_transactions pt
 		 WHERE pt.status IN ('gateway_pending', 'processing')
 		   AND pt.updated_at < NOW() - INTERVAL '1 minute'
@@ -410,12 +441,13 @@ type StuckTxn struct {
 	AmountPaisa   int64
 	Status        string
 	CreatedAt     time.Time
+	Gateway       string
 }
 
 	var list []StuckTxn
 	for rows.Next() {
 		var p StuckTxn
-		if err := rows.Scan(&p.InternalTxnID, &p.OrderID, &p.GatewayTxnID, &p.AmountPaisa, &p.Status, &p.CreatedAt); err == nil {
+		if err := rows.Scan(&p.InternalTxnID, &p.OrderID, &p.GatewayTxnID, &p.AmountPaisa, &p.Status, &p.CreatedAt, &p.Gateway); err == nil {
 			list = append(list, p)
 		}
 	}
@@ -438,6 +470,80 @@ type StuckTxn struct {
 	}
 
 	for _, p := range list {
+		if p.Gateway == "safepay" {
+			if w.safepay == nil || !w.safepay.IsConfigured() {
+				log.Printf("[SettlementWorker] Safepay client not configured; skipping stuck payment %s", p.InternalTxnID)
+				continue
+			}
+
+			details, inquiryErr := w.safepay.GetPaymentDetails(ctx, p.GatewayTxnID)
+			if inquiryErr != nil {
+				log.Printf("[SettlementWorker] Safepay reconciliation status check failed for %s (Order: %s, Tracker: %s): %v",
+					p.InternalTxnID, p.OrderID, p.GatewayTxnID, inquiryErr)
+				if time.Since(p.CreatedAt) > 15*time.Minute {
+					log.Printf("[SettlementWorker] Timing out stale stuck Safepay payment %s (>15m). Marking failed.", p.InternalTxnID)
+					if _, execErr := w.db.Exec(ctx,
+						`UPDATE payment_transactions 
+						 SET status = 'failed', error_message = 'Reconciliation timed out: Safepay tracker inquiry failed', updated_at = NOW() 
+						 WHERE transaction_id = $1 AND status IN ('gateway_pending', 'processing')`,
+						p.InternalTxnID,
+					); execErr != nil {
+						log.Printf("[SettlementWorker] CRITICAL: failed to mark timed-out reconciliation %s as failed: %v", p.InternalTxnID, execErr)
+					}
+					telemetry.RecordReconciliationOutcome("timeout")
+				} else {
+					telemetry.RecordReconciliationOutcome("still_pending")
+				}
+				continue
+			}
+
+			if details.State == "PAID" || details.State == "CAPTURED" {
+				if details.Amount > 0 && details.Amount != p.AmountPaisa {
+					log.Printf("[SettlementWorker] Safepay reconciliation amount mismatch for %s: expected %d paisa, got %d paisa", p.InternalTxnID, p.AmountPaisa, details.Amount)
+					if _, execErr := w.db.Exec(ctx,
+						`UPDATE payment_transactions SET status = 'failed', error_message = 'Safepay reconciliation amount mismatch', updated_at = NOW() WHERE transaction_id = $1`,
+						p.InternalTxnID,
+					); execErr != nil {
+						log.Printf("[SettlementWorker] CRITICAL: failed to mark amount-mismatched txn %s as failed: %v", p.InternalTxnID, execErr)
+					}
+					telemetry.RecordReconciliationOutcome("amount_mismatch")
+					continue
+				}
+
+				log.Printf("[SettlementWorker] Safepay reconciliation verified SUCCESS for %s (%s). Enqueuing atomic settlement...", p.InternalTxnID, p.GatewayTxnID)
+				telemetry.RecordReconciliationOutcome("settled")
+				w.enqueueSettlementOutbox(ctx, p.InternalTxnID, p.OrderID, p.GatewayTxnID, p.AmountPaisa, "safepay")
+				continue
+			} else if details.State == "FAILED" || details.State == "CANCELLED" {
+				log.Printf("[SettlementWorker] Safepay reconciliation verified REJECTION for %s: %s", p.InternalTxnID, details.State)
+				if _, execErr := w.db.Exec(ctx,
+					`UPDATE payment_transactions SET status = 'failed', error_message = $1, updated_at = NOW() WHERE transaction_id = $2`,
+					"Safepay status: "+details.State, p.InternalTxnID,
+				); execErr != nil {
+					log.Printf("[SettlementWorker] CRITICAL: failed to mark rejected txn %s as failed: %v", p.InternalTxnID, execErr)
+				}
+				telemetry.RecordReconciliationOutcome("failed")
+				continue
+			} else {
+				if time.Since(p.CreatedAt) > 15*time.Minute {
+					log.Printf("[SettlementWorker] Timing out stale stuck Safepay payment %s (>15m, state %s). Marking failed.", p.InternalTxnID, details.State)
+					if _, execErr := w.db.Exec(ctx,
+						`UPDATE payment_transactions 
+						 SET status = 'failed', error_message = 'Reconciliation timed out: Safepay tracker session expired', updated_at = NOW() 
+						 WHERE transaction_id = $1 AND status IN ('gateway_pending', 'processing')`,
+						p.InternalTxnID,
+					); execErr != nil {
+						log.Printf("[SettlementWorker] CRITICAL: failed to mark timed-out reconciliation %s as failed: %v", p.InternalTxnID, execErr)
+					}
+					telemetry.RecordReconciliationOutcome("timeout")
+				} else {
+					telemetry.RecordReconciliationOutcome("still_pending")
+				}
+				continue
+			}
+		}
+
+		// PayFast reconciliation path
 		var statusRes *payfast.TransactionStatusResponse
 		var inquiryErr error
 
@@ -497,7 +603,7 @@ type StuckTxn struct {
 
 			log.Printf("[SettlementWorker] Reconciliation verified SUCCESS for %s (%s). Enqueuing atomic settlement...", p.InternalTxnID, resolvedGatewayTxnID)
 			telemetry.RecordReconciliationOutcome("settled")
-			w.enqueueSettlementOutbox(ctx, p.InternalTxnID, p.OrderID, resolvedGatewayTxnID, p.AmountPaisa)
+			w.enqueueSettlementOutbox(ctx, p.InternalTxnID, p.OrderID, resolvedGatewayTxnID, p.AmountPaisa, "payfast")
 		} else if statusRes.StatusCode != "" && !payfast.IsSuccessCode(statusRes.StatusCode) {
 			log.Printf("[SettlementWorker] Reconciliation verified REJECTION for %s: %s (code: %s)", p.InternalTxnID, statusRes.StatusMsg, statusRes.StatusCode)
 			if _, execErr := w.db.Exec(ctx,
@@ -512,7 +618,7 @@ type StuckTxn struct {
 }
 
 // cleanupStalePending marks abandoned 'pending' and '3ds_required' rows (>15m old) as failed.
-// FIX [FIN-AUDIT #2]: For '3ds_required' rows with a gateway_txn_id, we query PayFast
+// FIX [FIN-AUDIT #2]: For '3ds_required' rows with a gateway_txn_id, we query PayFast/Safepay
 // TransactionStatusInquiry first — the gateway may have already captured funds.
 // Only 'pending' rows (never submitted to gateway) are blindly marked failed.
 // FIX: Also cleans up outbox_events that have exceeded max retry count.
@@ -528,10 +634,9 @@ func (w *SettlementWorker) cleanupStalePending(ctx context.Context) {
 		log.Printf("[SettlementWorker] Cleaned up %d stale abandoned payment attempts", res.RowsAffected())
 	}
 
-	// 2. For '3ds_required' rows: query PayFast before marking failed (FIN-AUDIT FIX #2).
-	//    The gateway may have already captured funds if the customer completed 3DS.
+	// 2. For '3ds_required' rows: query PayFast or Safepay before marking failed (FIN-AUDIT FIX #2).
 	threeDSRows, err := w.db.Query(ctx,
-		`SELECT transaction_id, order_tracking_id, COALESCE(gateway_txn_id, ''), amount, created_at
+		`SELECT transaction_id, order_tracking_id, COALESCE(gateway_txn_id, ''), amount, created_at, COALESCE(gateway, 'payfast')
 		 FROM payment_transactions
 		 WHERE status = '3ds_required' AND created_at < NOW() - INTERVAL '15 minutes'
 		 ORDER BY created_at ASC LIMIT 20`,
@@ -543,10 +648,36 @@ func (w *SettlementWorker) cleanupStalePending(ctx context.Context) {
 	defer threeDSRows.Close()
 
 	for threeDSRows.Next() {
-		var txnID, orderID, gatewayTxnID string
+		var txnID, orderID, gatewayTxnID, gateway string
 		var amountPaisa int64
 		var createdAt time.Time
-		if err := threeDSRows.Scan(&txnID, &orderID, &gatewayTxnID, &amountPaisa, &createdAt); err != nil {
+		if err := threeDSRows.Scan(&txnID, &orderID, &gatewayTxnID, &amountPaisa, &createdAt, &gateway); err != nil {
+			continue
+		}
+
+		if gateway == "safepay" && gatewayTxnID != "" && w.safepay != nil && w.safepay.IsConfigured() {
+			details, inqErr := w.safepay.GetPaymentDetails(ctx, gatewayTxnID)
+			if inqErr == nil && (details.State == "PAID" || details.State == "CAPTURED") {
+				log.Printf("[SettlementWorker] 3DS stale cleanup: Safepay confirmed SUCCESS for %s (token %s). Enqueuing settlement.", txnID, gatewayTxnID)
+				telemetry.RecordReconciliationOutcome("3ds_stale_settled")
+				w.enqueueSettlementOutbox(ctx, txnID, orderID, gatewayTxnID, amountPaisa, "safepay")
+				continue
+			}
+			if inqErr == nil && (details.State == "FAILED" || details.State == "CANCELLED") {
+				log.Printf("[SettlementWorker] 3DS stale cleanup: Safepay confirmed REJECTION for %s (state: %s)", txnID, details.State)
+				_, _ = w.db.Exec(ctx,
+					`UPDATE payment_transactions SET status = 'failed', error_message = $1, updated_at = NOW() WHERE transaction_id = $2`,
+					"Safepay 3DS failed: "+details.State, txnID,
+				)
+				telemetry.RecordReconciliationOutcome("3ds_stale_rejected")
+				continue
+			}
+			log.Printf("[SettlementWorker] 3DS stale cleanup: Safepay inquiry failed for %s, moving to gateway_pending for retry: %v", txnID, inqErr)
+			_, _ = w.db.Exec(ctx,
+				`UPDATE payment_transactions SET status = 'gateway_pending', updated_at = NOW() WHERE transaction_id = $1 AND status = '3ds_required'`,
+				txnID,
+			)
+			telemetry.RecordReconciliationOutcome("3ds_stale_requeued")
 			continue
 		}
 
@@ -558,7 +689,7 @@ func (w *SettlementWorker) cleanupStalePending(ctx context.Context) {
 				log.Printf("[SettlementWorker] 3DS stale cleanup: gateway confirmed SUCCESS for %s (txn %s). Enqueuing settlement.",
 					txnID, gatewayTxnID)
 				telemetry.RecordReconciliationOutcome("3ds_stale_settled")
-				w.enqueueSettlementOutbox(ctx, txnID, orderID, gatewayTxnID, amountPaisa)
+				w.enqueueSettlementOutbox(ctx, txnID, orderID, gatewayTxnID, amountPaisa, "payfast")
 				continue
 			}
 			if inquiryErr == nil && statusRes.StatusCode != "" && !payfast.IsSuccessCode(statusRes.StatusCode) {
@@ -581,7 +712,7 @@ func (w *SettlementWorker) cleanupStalePending(ctx context.Context) {
 			continue
 		}
 
-		// No gateway_txn_id or PayFast not configured — safe to mark failed
+		// No gateway_txn_id or gateway not configured — safe to mark failed
 		log.Printf("[SettlementWorker] 3DS stale cleanup: no gateway_txn_id for %s, marking failed", txnID)
 		_, _ = w.db.Exec(ctx,
 			`UPDATE payment_transactions SET status = 'failed', error_message = '3DS session expired - no gateway transaction found', updated_at = NOW()
@@ -589,6 +720,7 @@ func (w *SettlementWorker) cleanupStalePending(ctx context.Context) {
 			txnID,
 		)
 	}
+
 
 	// 3. Clean up outbox_events that have exceeded max retries (moved to FAILED status for manual intervention)
 	const maxRetries = 10
@@ -607,7 +739,7 @@ func (w *SettlementWorker) cleanupStalePending(ctx context.Context) {
 	}
 }
 
-func (w *SettlementWorker) enqueueSettlementOutbox(ctx context.Context, internalTxnID, orderID, gatewayTxnID string, amountPaisa int64) {
+func (w *SettlementWorker) enqueueSettlementOutbox(ctx context.Context, internalTxnID, orderID, gatewayTxnID string, amountPaisa int64, gateway string) {
 	tx, err := w.db.Begin(ctx)
 	if err != nil {
 		log.Printf("[SettlementWorker] Failed to begin transaction for reconciliation of order %s: %v", orderID, err)
@@ -650,7 +782,21 @@ func (w *SettlementWorker) enqueueSettlementOutbox(ctx context.Context, internal
 		return
 	}
 
-	idempotencyKey := fmt.Sprintf("payfast:split:%s", gatewayTxnID)
+	var debitAccount ledger.Account
+	var idempotencyPrefix string
+	switch gateway {
+	case "safepay":
+		debitAccount = ledger.AccountSafepayHolding
+		idempotencyPrefix = "safepay"
+	case "stripe":
+		debitAccount = ledger.AccountStripeHolding
+		idempotencyPrefix = "stripe"
+	default:
+		debitAccount = ledger.AccountPayFastHolding
+		idempotencyPrefix = "payfast"
+	}
+
+	idempotencyKey := fmt.Sprintf("%s:split:%s", idempotencyPrefix, gatewayTxnID)
 	currency := os.Getenv("DEFAULT_CURRENCY")
 	if currency == "" {
 		currency = "PKR"
@@ -658,13 +804,13 @@ func (w *SettlementWorker) enqueueSettlementOutbox(ctx context.Context, internal
 
 	transfers := []SettlementTransferItem{
 		{
-			DebitAccount:  string(ledger.AccountPayFastHolding),
+			DebitAccount:  string(debitAccount),
 			CreditAccount: string(ledger.AccountAdminRevenue),
 			AmountPaisa:   split.AdminRevenue,
 			Idempotency:   idempotencyKey + ":admin",
 		},
 		{
-			DebitAccount:  string(ledger.AccountPayFastHolding),
+			DebitAccount:  string(debitAccount),
 			CreditAccount: string(ledger.AccountVendorLockedEscrow),
 			AmountPaisa:   split.VendorEscrow,
 			Idempotency:   idempotencyKey + ":vendor",
@@ -672,7 +818,7 @@ func (w *SettlementWorker) enqueueSettlementOutbox(ctx context.Context, internal
 	}
 	if split.DeliveryEscrow > 0 {
 		transfers = append(transfers, SettlementTransferItem{
-			DebitAccount:  string(ledger.AccountPayFastHolding),
+			DebitAccount:  string(debitAccount),
 			CreditAccount: string(ledger.AccountCentralEscrow),
 			AmountPaisa:   split.DeliveryEscrow,
 			Idempotency:   idempotencyKey + ":delivery",

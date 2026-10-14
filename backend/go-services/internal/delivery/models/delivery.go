@@ -4,15 +4,18 @@ import "time"
 
 // Delivery statuses
 const (
-	StatusBroadcasting = "broadcasting"
-	StatusAccepted     = "accepted"
-	StatusPickedUp     = "picked_up"
-	StatusInTransit    = "in_transit"
-	StatusCompleted    = "completed"
-	StatusFailed       = "failed"
-	StatusCancelled    = "cancelled"
-	StatusAssigned     = "assigned"
-	StatusDisputed     = "disputed"
+	StatusBroadcasting       = "broadcasting"
+	StatusAccepted           = "accepted"
+	StatusPickedUp           = "picked_up"
+	StatusInTransit          = "in_transit"
+	StatusArrivedAtDropoff   = "arrived_at_dropoff"
+	StatusBreakdownPending   = "breakdown_pending_rescue"
+	StatusReturnedToVendor   = "returned_to_vendor"
+	StatusCompleted          = "completed"
+	StatusFailed             = "failed"
+	StatusCancelled          = "cancelled"
+	StatusAssigned           = "assigned"
+	StatusDisputed           = "disputed"
 )
 
 // Delivery bid statuses
@@ -96,9 +99,30 @@ type AcceptGigRequest struct {
 
 // UpdateGigStatusRequest used by riders to update delivery status
 type UpdateGigStatusRequest struct {
-	Status   string `json:"status" binding:"required"` // picked_up, in_transit, completed, failed
-	OTPCode  string `json:"otp_code,omitempty"`
-	PhotoURL string `json:"photo_url,omitempty"` // Pickup or Delivery photo URL
+	Status              string  `json:"status" binding:"required"` // picked_up, in_transit, arrived_at_dropoff, completed, failed, returned_to_vendor, breakdown_pending_rescue
+	OTPCode             string  `json:"otp_code,omitempty"`
+	PhotoURL            string  `json:"photo_url,omitempty"` // Pickup, Delivery, or Doorstep photo URL
+	ProofOfDeliveryType string  `json:"proof_of_delivery_type,omitempty"` // "otp", "photo_pod"
+	CashCollectedPaisa  int64   `json:"cash_collected_paisa,omitempty"`    // Actual physical cash received by rider (doorstep partial collection)
+	HandoverPIN         string  `json:"handover_pin,omitempty"`            // 4-digit PIN for rescue handover
+	RiderLat            float64 `json:"rider_lat,omitempty"`
+	RiderLng            float64 `json:"rider_lng,omitempty"`
+}
+
+// EmergencyBreakdownRequest used when a rider has an accident or bike failure mid-transit
+type EmergencyBreakdownRequest struct {
+	TrackingID   string  `json:"tracking_id" binding:"required"`
+	RiderTrackID string  `json:"rider_tracking_id" binding:"required"`
+	RiderLat     float64 `json:"rider_lat" binding:"required"`
+	RiderLng     float64 `json:"rider_lng" binding:"required"`
+	Reason       string  `json:"reason" binding:"required"`
+}
+
+// RescueAcceptRequest used when a second rider arrives to rescue the stranded package
+type RescueAcceptRequest struct {
+	TrackingID    string `json:"tracking_id" binding:"required"`
+	RescueRiderID string `json:"rescue_rider_id" binding:"required"`
+	HandoverPIN   string `json:"handover_pin" binding:"required"`
 }
 
 // DisputeOrderRequest used by customers to report disputes

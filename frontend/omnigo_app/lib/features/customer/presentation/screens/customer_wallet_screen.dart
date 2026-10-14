@@ -195,11 +195,11 @@ class _CustomerWalletScreenState extends State<CustomerWalletScreen> {
                       ),
                       const SizedBox(height: 8),
                       _buildTopUpOption(
-                        title: 'PayFast (Cards & Bank)',
-                        subtitle: 'Instant via Visa / Mastercard / UnionPay',
+                        title: 'Safepay (Cards & Checkout)',
+                        subtitle: 'Instant via Visa / Mastercard / PayPak',
                         icon: Icons.credit_card,
                         color: Colors.indigo,
-                        onTap: _topUpInFlight ? null : () => _topUp(gateway: 'payfast'),
+                        onTap: _topUpInFlight ? null : () => _topUp(gateway: 'safepay'),
                       ),
                       const SizedBox(height: 8),
                       _buildTopUpOption(

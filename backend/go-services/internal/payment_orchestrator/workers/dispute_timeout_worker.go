@@ -57,9 +57,10 @@ func (w *DisputeTimeoutWorker) Start(ctx context.Context) {
 func (w *DisputeTimeoutWorker) processExpiredDisputes(ctx context.Context) {
 	// Find disputes that are open and older than 48 hours
 	rows, err := w.db.Query(ctx,
-		`SELECT d.id, d.order_tracking_id, d.filed_by, r.customer_tracking_id, e.amount
+		`SELECT d.id, d.order_tracking_id, d.filed_by, COALESCE(r.customer_tracking_id, o.customer_tracking_id, ''), e.amount
 		 FROM disputes d
-		 JOIN return_requests r ON r.order_tracking_id = d.order_tracking_id
+		 JOIN orders o ON o.order_tracking_id = d.order_tracking_id
+		 LEFT JOIN return_requests r ON r.order_tracking_id = d.order_tracking_id
 		 JOIN escrow_holds e ON e.order_tracking_id = d.order_tracking_id
 		 WHERE d.status = 'open'
 		   AND d.created_at < NOW() - INTERVAL '48 hours'

@@ -130,21 +130,37 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *models.CreateOrderR
 	// fetch prices from the product service and calculate server-side.
 	// The background worker will reconcile final prices via product service.
 	// H4: Uber-style — customer pays product total + delivery fee.
+	// Server-side authoritative price & stock verification: fetch each product's catalog price & live stock
 	var productTotalPaisa int64
-	if req.TotalAmount > 0 {
-		productTotalPaisa = int64(math.Round(float64(req.TotalAmount) * 100))
-	} else {
-		// Server-side calculation: fetch each product's price and sum up.
-		calculatedTotal := 0.0
-		for _, item := range req.Items {
-			price, _, err := s.fetchProductPrice(ctx, item.ProductTrackingID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to fetch price for product %s: %w", item.ProductTrackingID, err)
+	calculatedTotal := 0.0
+	for _, item := range req.Items {
+		price, stock, err := s.fetchProductPrice(ctx, item.ProductTrackingID)
+		if err != nil {
+			log.Printf("[OrderService] Product lookup failed for %s: %v", item.ProductTrackingID, err)
+			return nil, fmt.Errorf("PRODUCT_LOOKUP_FAILED: %w", err)
+		}
+		// SP-GO-20: Block out-of-stock purchases BEFORE payment occurs
+		if stock <= 0 {
+			return nil, fmt.Errorf("OUT_OF_STOCK: Product %s is currently out of stock and cannot be purchased", item.ProductTrackingID)
+		}
+		if item.Quantity > stock {
+			return nil, fmt.Errorf("INSUFFICIENT_STOCK: Product %s only has %d units in stock (requested %d)", item.ProductTrackingID, stock, item.Quantity)
+		}
+		calculatedTotal += price * float64(item.Quantity)
+	}
+
+	if calculatedTotal > 0 {
+		if req.TotalAmount > 0 {
+			diff := math.Abs(req.TotalAmount - calculatedTotal)
+			if diff > 1.0 { // Price drift detected (e.g. catalog update while in cart)
+				log.Printf("[OrderService] Price drift detected: client sent %.2f PKR, server catalog is %.2f PKR. Using authoritative catalog price.",
+					req.TotalAmount, calculatedTotal)
 			}
-			calculatedTotal += price * float64(item.Quantity)
 		}
 		req.TotalAmount = calculatedTotal
 		productTotalPaisa = int64(math.Round(calculatedTotal * 100))
+	} else if req.TotalAmount > 0 {
+		productTotalPaisa = int64(math.Round(float64(req.TotalAmount) * 100))
 	}
 	// Default currency if not provided
 	if req.Currency == "" {
@@ -261,57 +277,67 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *models.CreateOrderR
 	return order, nil
 }
 
-// fetchProductPrice calls the Product Service to get the real price for a product
-// using its tracking ID. Returns (price, stock, error).
+// fetchProductPrice calls the Product Service to get the real price and live stock for a product
+// using its tracking ID. Falls back to direct DB query if product service is unreachable.
+// Returns (price, stock, error).
 func (s *OrderService) fetchProductPrice(ctx context.Context, productTrackingID string) (float64, int, error) {
-	if s.productServiceURL == "" {
-		return 0, 0, errors.New("product service URL not configured")
-	}
+	if s.productServiceURL != "" {
+		var url string
+		var req *http.Request
+		var err error
 
-	var url string
-	var req *http.Request
-	var err error
-
-	if s.internalSigner != nil {
-		url = fmt.Sprintf("%s/api/v1/internal/products/tracking/%s", s.productServiceURL, productTrackingID)
-		req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return 0, 0, err
+		if s.internalSigner != nil {
+			url = fmt.Sprintf("%s/api/v1/internal/products/tracking/%s", s.productServiceURL, productTrackingID)
+			req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
+			if err == nil {
+				s.internalSigner.SignRequest(req, nil)
+			}
+		} else {
+			url = fmt.Sprintf("%s/api/v1/products/tracking/%s", s.productServiceURL, productTrackingID)
+			req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
 		}
-		s.internalSigner.SignRequest(req, nil)
-	} else {
-		url = fmt.Sprintf("%s/api/v1/products/tracking/%s", s.productServiceURL, productTrackingID)
-		req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return 0, 0, err
+
+		if err == nil {
+			client := &http.Client{Timeout: 3 * time.Second}
+			resp, reqErr := client.Do(req)
+			if reqErr == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					var data struct {
+						Price     float64 `json:"price"`
+						BasePrice float64 `json:"base_price"`
+						Stock     int     `json:"stock"`
+					}
+					if decodeErr := json.NewDecoder(resp.Body).Decode(&data); decodeErr == nil {
+						price := data.Price
+						if data.BasePrice > 0 {
+							price = data.BasePrice
+						}
+						return price, data.Stock, nil
+					}
+				}
+			}
 		}
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to call product service: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, 0, fmt.Errorf("product service returned status %d", resp.StatusCode)
-	}
-
-	var data struct {
-		Price     float64 `json:"price"`
-		BasePrice float64 `json:"base_price"`
-		Stock     int     `json:"stock"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return 0, 0, fmt.Errorf("failed to decode product response: %w", err)
+	// Fallback to direct DB query against products catalog table
+	if s.repo != nil && s.repo.DB() != nil {
+		var price float64
+		var stock int
+		var isActive bool
+		err := s.repo.DB().QueryRow(ctx,
+			`SELECT base_price, stock, is_active FROM products WHERE product_tracking_id = $1`,
+			productTrackingID,
+		).Scan(&price, &stock, &isActive)
+		if err == nil {
+			if !isActive {
+				return price, 0, nil // Inactive products have 0 available stock
+			}
+			return price, stock, nil
+		}
 	}
 
-	price := data.Price
-	if data.BasePrice > 0 {
-		price = data.BasePrice
-	}
-	return price, data.Stock, nil
+	return 0, 0, fmt.Errorf("failed to fetch product %s price/stock", productTrackingID)
 }
 
 // releaseStockCompensating runs asynchronously to release stock if order creation fails

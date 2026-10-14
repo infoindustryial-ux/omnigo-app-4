@@ -2,11 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import '../../../../core/di/service_locator.dart';
-import '../../../../core/network/api_client.dart';
 import '../../../../core/network/websocket_client.dart';
-import '../../../../core/services/session_registry.dart';
 
 class VehicleSelectorSheet extends StatefulWidget {
 
@@ -16,7 +13,7 @@ class VehicleSelectorSheet extends StatefulWidget {
     required this.onBookRide,
   });
   final List<dynamic> estimates;
-  final void Function(String vehicleType, double fare) onBookRide;
+  final void Function(String vehicleType, double fare, String paymentMethod) onBookRide;
 
   @override
   State<VehicleSelectorSheet> createState() => _VehicleSelectorSheetState();
@@ -26,6 +23,7 @@ class _VehicleSelectorSheetState extends State<VehicleSelectorSheet> with Single
   String _selectedVehicle = '';
   double _selectedFare = 0.0;
   String _serviceType = 'passenger'; // 'passenger' or 'courier'
+  String _selectedPaymentMethod = 'cash'; // 'cash' | 'wallet'
   bool _customOfferEnabled = false;
   double _negotiatedFare = 0.0;
   String _biddingStatus = 'idle'; // 'idle' | 'searching' | 'offers_received'
@@ -102,62 +100,6 @@ class _VehicleSelectorSheetState extends State<VehicleSelectorSheet> with Single
         return Icons.directions_car_rounded;
       default:
         return Icons.directions_car_rounded;
-    }
-  }
-
-  Future<void> _startBiddingProcess() async {
-    setState(() {
-      _biddingStatus = 'searching';
-      _riderOffers = [];
-    });
-
-    try {
-      // Fetch actual GPS coordinates instead of hardcoded values.
-      final permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        final req = await Geolocator.requestPermission();
-        if (req == LocationPermission.denied) {
-          throw Exception('Location permission denied');
-        }
-      }
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      );
-
-      // Step 1: create the ride so we have a tracking_id. The backend's
-      // POST /rides endpoint returns {tracking_id, ...}.
-      final rideResp = await ApiClient().post('/rides/', {
-        'customer_tracking_id':
-            SessionRegistry.instance.trackingId ?? 'CUST-UNKNOWN',
-        'vehicle_type': _selectedVehicle,
-        'service_type': _serviceType,
-        'pickup_lat': position.latitude,
-        'pickup_lng': position.longitude,
-        'dropoff_lat': position.latitude,
-        'dropoff_lng': position.longitude,
-        'fare_amount': _negotiatedFare,
-        'currency': 'PKR',
-      });
-      final rideTrackingId = (rideResp as Map<String, dynamic>)['tracking_id']?.toString();
-      if (rideTrackingId == null) {
-        throw Exception('Ride creation did not return a tracking_id');
-      }
-
-      // Step 2: post the customer's opening bid on that ride. Riders
-      // see this in their app and may submit counter-offers.
-      await ApiClient().post('/rides/$rideTrackingId/bid', {
-        'rider_tracking_id': '',
-        'proposed_fare': _negotiatedFare,
-        'eta_minutes': 5,
-        'note': 'Customer posted opening bid via app',
-      });
-    } catch (e) {
-      debugPrint('Bid dispatch error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Bid failed: $e')),
-        );
-      }
     }
   }
 
@@ -305,7 +247,7 @@ class _VehicleSelectorSheetState extends State<VehicleSelectorSheet> with Single
                           ElevatedButton(
                             onPressed: () {
                               Navigator.pop(context);
-                              widget.onBookRide(_selectedVehicle, ((offer['fare'] as num?) ?? 0).toDouble());
+                              widget.onBookRide(_selectedVehicle, ((offer['fare'] as num?) ?? 0).toDouble(), _selectedPaymentMethod);
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFCAFF33),
@@ -634,18 +576,47 @@ class _VehicleSelectorSheetState extends State<VehicleSelectorSheet> with Single
             ),
           ),
         ],
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
+        // Payment Method Selector
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Payment Mode',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                fontFamily: 'Outfit',
+              ),
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildPaymentMethodChip('cash', '💵 Cash', Icons.payments_outlined),
+                  const SizedBox(width: 8),
+                  _buildPaymentMethodChip('wallet', '👛 Wallet', Icons.account_balance_wallet_outlined),
+                  const SizedBox(width: 8),
+                  _buildPaymentMethodChip('card', '💳 Card / Safepay', Icons.credit_card_outlined),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
         // Confirm Button
         ElevatedButton(
           onPressed: _selectedVehicle.isEmpty || (_customOfferEnabled && _negotiatedFare <= 0)
               ? null
               : () {
-                  if (_customOfferEnabled) {
-                    _startBiddingProcess();
-                  } else {
-                    Navigator.pop(context);
-                    widget.onBookRide(_selectedVehicle, _selectedFare);
-                  }
+                  Navigator.pop(context);
+                  widget.onBookRide(
+                    _selectedVehicle,
+                    _customOfferEnabled ? _negotiatedFare : _selectedFare,
+                    _selectedPaymentMethod,
+                  );
                 },
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFFCAFF33),
@@ -669,6 +640,44 @@ class _VehicleSelectorSheetState extends State<VehicleSelectorSheet> with Single
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPaymentMethodChip(String method, String label, IconData icon) {
+    final isSelected = _selectedPaymentMethod == method;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedPaymentMethod = method),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFCAFF33) : Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? const Color(0xFFCAFF33) : Colors.white.withOpacity(0.12),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? Colors.black : Colors.white70,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.black : Colors.white70,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                fontFamily: 'Outfit',
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

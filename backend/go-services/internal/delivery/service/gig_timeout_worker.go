@@ -141,11 +141,29 @@ func (w *GigTimeoutWorker) cancelGigAndOrder(ctx context.Context, gigTrackingID,
 		gigTrackingID,
 	)
 
-	// 2. Cancel the order (idempotent, only if still pending/accepted)
-	result, err := tx.Exec(ctx,
-		`UPDATE orders SET status = 'cancelled', updated_at = NOW()
-		 WHERE order_tracking_id = $1 AND status IN ('pending', 'paid', 'accepted')`,
+	// 2. Query order details to check if payment needs refunding
+	var paymentStatus string
+	var totalBilledPaisa int64
+	var totalAmount float64
+	var currency string
+	var customerID string
+	_ = tx.QueryRow(ctx,
+		`SELECT COALESCE(payment_status, 'pending'), COALESCE(total_billed_amount_paisa, 0),
+		        COALESCE(total_amount, 0), COALESCE(currency, 'PKR'),
+		        COALESCE(customer_tracking_id, '')
+		 FROM orders WHERE order_tracking_id = $1`,
 		orderTrackingID,
+	).Scan(&paymentStatus, &totalBilledPaisa, &totalAmount, &currency, &customerID)
+
+	newPaymentStatus := "failed"
+	if paymentStatus == "paid" {
+		newPaymentStatus = "refund_pending"
+	}
+
+	result, err := tx.Exec(ctx,
+		`UPDATE orders SET status = 'cancelled', payment_status = $1, updated_at = NOW()
+		 WHERE order_tracking_id = $2 AND status IN ('pending', 'paid', 'accepted')`,
+		newPaymentStatus, orderTrackingID,
 	)
 	if err != nil {
 		log.Printf("[GigTimeout] Failed to cancel order %s: %v", orderTrackingID, err)
@@ -153,6 +171,38 @@ func (w *GigTimeoutWorker) cancelGigAndOrder(ctx context.Context, gigTrackingID,
 	}
 	rowsAffected := result.RowsAffected()
 	_ = rowsAffected
+
+	// 3. If order was prepaid, write to outbox_events for automated wallet refund
+	if paymentStatus == "paid" {
+		refundAmount := totalAmount
+		if totalBilledPaisa > 0 {
+			refundAmount = float64(totalBilledPaisa) / 100.0
+		}
+		refundOutbox := map[string]interface{}{
+			"order_id":      orderTrackingID,
+			"reason":        "no_rider_available_timeout",
+			"refund_amount": refundAmount,
+			"currency":      currency,
+			"refund_to":     "original",
+			"timestamp":     time.Now().UnixMilli(),
+		}
+		payloadBytes, _ := json.Marshal(refundOutbox)
+		_, err = tx.Exec(ctx,
+			`INSERT INTO outbox_events (aggregate_id, topic, payload, status, created_at, updated_at)
+			 VALUES ($1, 'payment_refund', $2::jsonb, 'PENDING', NOW(), NOW())`,
+			orderTrackingID, payloadBytes,
+		)
+		if err != nil {
+			log.Printf("[GigTimeout] Failed to enqueue refund outbox for %s: %v", orderTrackingID, err)
+		}
+
+		// Cancel any vendor escrow hold
+		_, _ = tx.Exec(ctx,
+			`UPDATE escrow_holds SET status = 'cancelled', updated_at = NOW()
+			 WHERE order_tracking_id = $1 AND status = 'held'`,
+			orderTrackingID,
+		)
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("[GigTimeout] Failed to commit: %v", err)

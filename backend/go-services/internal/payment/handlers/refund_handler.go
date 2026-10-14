@@ -43,11 +43,14 @@ func NewRefundHandler(orchestrator *service.Orchestrator, ledgerSvc *ledger.Serv
 }
 
 type RefundRequest struct {
-	OrderID     string  `json:"order_tracking_id" binding:"required"`
-	Reason      string  `json:"reason" binding:"required"`
-	Amount      float64 `json:"amount"`    // 0 = full refund (rupees, converted to paisa internally)
-	RefundTo    string  `json:"refund_to"` // original | wallet
-	RequestedBy string  `json:"requested_by" binding:"required"`
+	OrderID         string  `json:"order_tracking_id" binding:"required"`
+	Reason          string  `json:"reason" binding:"required"`
+	Amount          float64 `json:"amount"`    // 0 = full refund (rupees, converted to paisa internally)
+	RefundTo        string  `json:"refund_to"` // original | wallet | bank_account
+	RequestedBy     string  `json:"requested_by" binding:"required"`
+	BeneficiaryName string  `json:"beneficiary_name"`
+	BeneficiaryIBAN string  `json:"beneficiary_iban"`
+	BankName        string  `json:"bank_name"`
 }
 
 type CancelRequest struct {
@@ -156,9 +159,8 @@ func (h *RefundHandler) executeRefund(ctx context.Context, req RefundRequest) (g
 	}
 
 	// Wallet refund: credit back to customer's wallet balance.
-	// For wallet payments, there is no external gateway to refund —
-	// the money came from the wallet, so we credit it back directly.
-	if gateway == "wallet" && h.walletSvc != nil {
+	// If customer explicitly requested refund to wallet or payment was made via wallet:
+	if (req.RefundTo == "wallet" || gateway == "wallet") && h.walletSvc != nil {
 		if err := h.walletSvc.CreditFunds(ctx, order.UserTrackID, fmt.Sprintf("refund:%s", req.OrderID), refundAmountPaisa); err != nil {
 			log.Printf("[REFUND] WARNING: wallet credit failed for order %s: %v", req.OrderID, err)
 			// Non-fatal: ledger transfer still happens below, but wallet balance won't reflect
@@ -189,8 +191,10 @@ func (h *RefundHandler) executeRefund(ctx context.Context, req RefundRequest) (g
 	// Ledger movement: source depends on whether settlement already occurred.
 	// C2 FIX: If settled, debit from vendor escrow (clawback) not central_escrow.
 	creditAccount := ledger.AccountCustomerRefund
-	if req.RefundTo == "wallet" {
+	if req.RefundTo == "wallet" || gateway == "wallet" {
 		creditAccount = ledger.AccountCustomerWallet
+	} else if req.RefundTo == "bank_account" {
+		creditAccount = ledger.AccountCustomerBankPayout
 	}
 
 	debitAccount := ledger.AccountCentralEscrow

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/omnigo/backend/internal/ledger"
+	"github.com/omnigo/backend/internal/payment/safepay"
 	"github.com/omnigo/backend/internal/shared/money"
 )
 
@@ -491,4 +492,137 @@ func (s *CustomerWalletService) creditWallet(ctx context.Context, customerTracki
 	}
 
 	return nil
+}
+
+// CustomerWithdrawalRequest represents a bank payout request from a customer.
+type CustomerWithdrawalRequest struct {
+	CustomerTrackingID string  `json:"customer_tracking_id"`
+	Amount             float64 `json:"amount"`
+	AmountPaisa        int64   `json:"amount_paisa"`
+	BeneficiaryName    string  `json:"beneficiary_name"`
+	BeneficiaryIBAN    string  `json:"beneficiary_iban"`
+	RaastID            string  `json:"raast_id"`
+	BankName           string  `json:"bank_name"`
+}
+
+// CustomerWithdrawalResponse is returned after a customer bank payout is registered.
+type CustomerWithdrawalResponse struct {
+	PayoutID              string  `json:"payout_id"`
+	CustomerTrackingID    string  `json:"customer_tracking_id"`
+	Amount                float64 `json:"amount"`
+	AmountPaisa           int64   `json:"amount_paisa"`
+	Status                string  `json:"status"`
+	RemainingBalance      float64 `json:"remaining_balance"`
+	RemainingBalancePaisa int64   `json:"remaining_balance_paisa"`
+	BeneficiaryIBAN       string  `json:"beneficiary_iban"`
+	CreatedAt             string  `json:"created_at"`
+}
+
+// RequestWithdrawal initiates a bank withdrawal for a customer, validating IBAN and deducting wallet balance atomically.
+func (s *CustomerWalletService) RequestWithdrawal(ctx context.Context, req CustomerWithdrawalRequest) (*CustomerWithdrawalResponse, error) {
+	if req.AmountPaisa <= 0 && req.Amount > 0 {
+		req.AmountPaisa = money.RupeesToPaisa(req.Amount)
+	}
+	if req.AmountPaisa <= 0 {
+		return nil, fmt.Errorf("withdrawal amount must be greater than zero")
+	}
+
+	// Minimum withdrawal: PKR 100 = 10,000 paisa
+	if req.AmountPaisa < 10000 {
+		return nil, fmt.Errorf("minimum customer withdrawal amount is PKR 100.00")
+	}
+
+	if req.BeneficiaryIBAN == "" {
+		return nil, fmt.Errorf("beneficiary IBAN is required")
+	}
+	sanitizedIBAN := safepay.SanitizeIBAN(req.BeneficiaryIBAN)
+	if err := safepay.ValidatePakistaniIBAN(sanitizedIBAN); err != nil {
+		return nil, fmt.Errorf("invalid Pakistani IBAN: %w", err)
+	}
+	req.BeneficiaryIBAN = sanitizedIBAN
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start withdrawal transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var balancePaisa int64
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE(balance_paisa, 0) FROM customer_wallet WHERE customer_tracking_id = $1 FOR UPDATE`,
+		req.CustomerTrackingID,
+	).Scan(&balancePaisa)
+	if err != nil {
+		return nil, fmt.Errorf("customer wallet not found: %w", err)
+	}
+
+	if balancePaisa < req.AmountPaisa {
+		return nil, fmt.Errorf("insufficient wallet balance (available: PKR %.2f, requested: PKR %.2f)",
+			float64(balancePaisa)/100.0, float64(req.AmountPaisa)/100.0)
+	}
+
+	var remainingBalancePaisa int64
+	err = tx.QueryRow(ctx,
+		`UPDATE customer_wallet
+		 SET balance_paisa = balance_paisa - $1, updated_at = NOW()
+		 WHERE customer_tracking_id = $2 AND balance_paisa >= $1
+		 RETURNING balance_paisa`,
+		req.AmountPaisa, req.CustomerTrackingID,
+	).Scan(&remainingBalancePaisa)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deduct customer wallet balance: %w", err)
+	}
+
+	var payoutID string
+	var createdAt time.Time
+	err = tx.QueryRow(ctx,
+		`INSERT INTO customer_payouts (
+			id, customer_tracking_id, amount, amount_paisa, method,
+			beneficiary_name, beneficiary_iban, raast_id, bank_name,
+			gateway, status, created_at, updated_at
+		 ) VALUES (
+			gen_random_uuid(), $1, $2, $3, 'bank_transfer',
+			$4, $5, $6, $7,
+			'safepay', 'pending', NOW(), NOW()
+		 )
+		 RETURNING id::text, created_at`,
+		req.CustomerTrackingID, float64(req.AmountPaisa)/100.0, req.AmountPaisa,
+		req.BeneficiaryName, req.BeneficiaryIBAN, req.RaastID, req.BankName,
+	).Scan(&payoutID, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to record customer payout: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit customer withdrawal: %w", err)
+	}
+
+	// Double-entry ledger: customer_wallet → customer_bank_payout_account
+	if s.ledger != nil {
+		idempotencyKey := fmt.Sprintf("customer:payout:%s", payoutID)
+		if _, err := s.ledger.Transfer(ctx, ledger.TransferRequest{
+			DebitAccount:   ledger.AccountCustomerWallet,
+			CreditAccount:  ledger.AccountCustomerBankPayout,
+			Amount:         req.AmountPaisa,
+			Currency:       "PKR",
+			ReferenceType:  "customer_payout",
+			ReferenceID:    payoutID,
+			Description:    fmt.Sprintf("Customer payout request %s: %d paisa to %s", payoutID, req.AmountPaisa, req.BeneficiaryIBAN),
+			IdempotencyKey: idempotencyKey,
+		}); err != nil {
+			log.Printf("[CustomerWallet] Warning: customer payout ledger transfer failed: %v", err)
+		}
+	}
+
+	return &CustomerWithdrawalResponse{
+		PayoutID:              payoutID,
+		CustomerTrackingID:    req.CustomerTrackingID,
+		Amount:                float64(req.AmountPaisa) / 100.0,
+		AmountPaisa:           req.AmountPaisa,
+		Status:                "pending",
+		RemainingBalance:      float64(remainingBalancePaisa) / 100.0,
+		RemainingBalancePaisa: remainingBalancePaisa,
+		BeneficiaryIBAN:       req.BeneficiaryIBAN,
+		CreatedAt:             createdAt.UTC().Format(time.RFC3339),
+	}, nil
 }

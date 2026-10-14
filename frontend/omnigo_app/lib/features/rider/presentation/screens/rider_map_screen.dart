@@ -108,8 +108,7 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
   /// the camera to the destination. Native turn-by-turn can be re-introduced
   /// later by wiring a new in-house Flutter plugin over OSRM/Valhalla.
   void _startNavigation() async {
-    if (_center == null || _gigDropoffPoint() == null) return;
-    final destination = _activeGigStatus == 'accepted'
+    final destination = (_activeGigStatus == 'accepted' || _activeGigStatus == 'ride_accepted' || _activeGigStatus == 'ride_arrived')
         ? _gigPickupPoint()
         : _gigDropoffPoint();
     if (destination == null) return;
@@ -520,6 +519,31 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
     final gigId = _broadcastedGig!['tracking_id'] as String?;
     if (gigId == null) return;
     try {
+      if (_activeGigStatus.startsWith('ride_') || gigId.startsWith('RIDE-')) {
+        final origin = (_activeGigStatus == 'ride_accepted') ? _center : _gigPickupPoint();
+        final dest = (_activeGigStatus == 'ride_accepted' || _activeGigStatus == 'ride_arrived')
+            ? _gigPickupPoint()
+            : _gigDropoffPoint();
+        if (origin != null && dest != null && (origin.latitude != dest.latitude || origin.longitude != dest.longitude)) {
+          final response = await _apiClient.get(ApiEndpoints.mapRoute(origin.latitude, origin.longitude, dest.latitude, dest.longitude));
+          final data = response is String ? jsonDecode(response) as Map<String, dynamic> : response as Map<String, dynamic>;
+          final coordsList = data['coordinates'] as List<dynamic>?;
+          final distance = data['distance_meters'] as num?;
+          final duration = data['duration_seconds'] as num?;
+          if (coordsList != null && coordsList.isNotEmpty && mounted) {
+            final List<LatLng> points = coordsList
+                .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
+                .toList();
+            setState(() {
+              _routePolyline = points;
+              _routeDistanceKm = distance != null ? distance.toDouble() / 1000.0 : null;
+              _routeEtaMinutes = duration != null ? duration.toDouble() / 60.0 : null;
+            });
+          }
+        }
+        return;
+      }
+
       final response = await _apiClient.get(ApiEndpoints.deliveryGigRoute(gigId));
       final data = response is String ? jsonDecode(response) as Map<String, dynamic> : response as Map<String, dynamic>;
       final coordsList = data['coordinates'] as List<dynamic>?;
@@ -644,8 +668,12 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
       final errStr = e.toString().toLowerCase();
       String message = 'Unable to accept gig. Please try again.';
       bool showVerificationDialog = false;
+      bool showCodBlockedDialog = false;
 
-      if (errStr.contains('order limit reached') || errStr.contains('unverified rider')) {
+      if (errStr.contains('cash limit') || errStr.contains('cash account is blocked') || errStr.contains('deposit')) {
+        message = 'COD Cash limit reached (>= PKR 5,000). Product deliveries paused.';
+        showCodBlockedDialog = true;
+      } else if (errStr.contains('order limit reached') || errStr.contains('unverified rider')) {
         message = '10-Order Limit reached for unverified account. Please submit KYC verification.';
         showVerificationDialog = true;
       } else if (errStr.contains('already taken') || errStr.contains('conflict') || errStr.contains('409')) {
@@ -664,7 +692,9 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
-        if (showVerificationDialog) {
+        if (showCodBlockedDialog) {
+          _showCODCashBlockedDialog();
+        } else if (showVerificationDialog) {
           _showVerificationPromptDialog();
         }
       }
@@ -879,35 +909,37 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
 
     try {
       if (nextStatus == 'ride_completed') {
-        final backendDistanceMeters = (_broadcastedGig!['actual_distance_meters'] as num?)?.toDouble();
-        final backendDurationSecs = (_broadcastedGig!['actual_duration_seconds'] as num?)?.toDouble();
-        final distanceMeters = backendDistanceMeters ?? (_routeDistanceKm ?? 0) * 1000;
-        final durationSecs = backendDurationSecs ?? (_routeEtaMinutes ?? 0) * 60;
-
-        await _apiClient.post(ApiEndpoints.rideComplete(rideId), {
-          "rider_tracking_id": widget.trackingId,
-          "final_fare": ((_broadcastedGig!['fare_amount'] as num?) ?? 0).toDouble(),
-          "distance_meters": distanceMeters,
-          "duration_seconds": durationSecs,
-          "payment_method": "cash",
-        });
-        if (mounted) {
-          setState(() {
-            _activeGigStatus = 'No Active Gig';
-            _broadcastedGig = null;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ride completed successfully!')));
-        }
+        await _showRideCompletionReceiptModal(rideId);
+        return;
       } else {
-        final stateForApi = nextStatus == 'ride_in_progress' ? 'in_progress' : nextStatus;
+        String stateForApi = nextStatus;
+        if (nextStatus == 'ride_arrived') {
+          stateForApi = 'arrived';
+        } else if (nextStatus == 'ride_in_progress') {
+          stateForApi = 'in_progress';
+        }
+
         await _apiClient.patch(ApiEndpoints.rideUpdateStatus(rideId), {
           "rider_tracking_id": widget.trackingId,
           "status": stateForApi,
         });
+
+        _broadcastedGig!['status'] = nextStatus;
+        await OfflineGigStorage.saveActiveGig(_broadcastedGig!);
+
         if (mounted) {
           setState(() {
             _activeGigStatus = nextStatus;
           });
+          unawaited(_loadRoute());
+          if (nextStatus == 'ride_arrived') {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Arrival confirmed! Passenger notified: "Captain has arrived".'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
       }
     } catch (e) {
@@ -922,10 +954,171 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
           message = 'Session expired. Please login again.';
         }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message), backgroundColor: Colors.red),
+          SnackBar(content: Text(message)),
         );
       }
     }
+  }
+
+  Future<void> _showRideCompletionReceiptModal(String rideId) async {
+    final fare = ((_broadcastedGig!['fare_amount'] as num?) ?? 0).toDouble();
+    final paymentMethod = (_broadcastedGig!['payment_method']?.toString() ?? 'cash').toLowerCase();
+    final isCash = paymentMethod == 'cash';
+    int selectedRating = 5;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(height: 16),
+              const Icon(Icons.check_circle_rounded, color: Colors.green, size: 54),
+              const SizedBox(height: 10),
+              const Text(
+                'Ride Completed!',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.blackAccent),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Total Fare: PKR ${fare.toStringAsFixed(0)}',
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.green),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isCash ? Colors.amber.shade50 : Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: isCash ? Colors.amber.shade300 : Colors.blue.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isCash ? Icons.payments_rounded : Icons.credit_card_rounded,
+                      color: isCash ? Colors.amber.shade900 : Colors.blue.shade900,
+                      size: 32,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isCash ? 'CASH PAYMENT' : 'ONLINE PAYMENT',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: isCash ? Colors.amber.shade900 : Colors.blue.shade900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            isCash
+                                ? 'Collect PKR ${fare.toStringAsFixed(0)} Cash from passenger now.'
+                                : 'Paid via Wallet/Card. DO NOT collect cash from passenger!',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isCash ? Colors.amber.shade900 : Colors.blue.shade900,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Rate Passenger:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey)),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (index) {
+                  return IconButton(
+                    icon: Icon(
+                      index < selectedRating ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: Colors.amber,
+                      size: 32,
+                    ),
+                    onPressed: () {
+                      setModalState(() {
+                        selectedRating = index + 1;
+                      });
+                    },
+                  );
+                }),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    final backendDistanceMeters = (_broadcastedGig!['actual_distance_meters'] as num?)?.toDouble();
+                    final backendDurationSecs = (_broadcastedGig!['actual_duration_seconds'] as num?)?.toDouble();
+                    final distanceMeters = backendDistanceMeters ?? (_routeDistanceKm ?? 0) * 1000;
+                    final durationSecs = backendDurationSecs ?? (_routeEtaMinutes ?? 0) * 60;
+
+                    try {
+                      await _apiClient.post(ApiEndpoints.rideComplete(rideId), {
+                        "rider_tracking_id": widget.trackingId,
+                        "final_fare": fare,
+                        "distance_meters": distanceMeters,
+                        "duration_seconds": durationSecs,
+                        "payment_method": paymentMethod,
+                      });
+                      await OfflineGigStorage.clearActiveGig();
+                      if (mounted) {
+                        setState(() {
+                          _activeGigStatus = 'No Active Gig';
+                          _broadcastedGig = null;
+                          _routePolyline = [];
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Ride completed and settled successfully!')),
+                        );
+                        _fetchCodDebts();
+                        _fetchWalletSummary();
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error closing ride: $e')),
+                        );
+                      }
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.blackAccent,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text(
+                    isCash ? 'Confirm Cash Collected' : 'Finish Ride',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _sendGigStatusUpdate(String nextStatus, {String? otp, String? photoUrl}) async {
@@ -1034,6 +1227,7 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
       });
 
       _broadcastedGig!['status'] = 'ride_accepted';
+      await OfflineGigStorage.saveActiveGig(_broadcastedGig!);
       
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('active_customer_id', (_broadcastedGig!['customer_tracking_id'] as String?) ?? '');
@@ -1062,6 +1256,13 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
     if (_broadcastedGig == null) return;
     try {
       final gigId = _broadcastedGig!['tracking_id'] as String?;
+      if (gigId == null) return;
+
+      if (_activeGigStatus.startsWith('ride_') || gigId.startsWith('RIDE-')) {
+        await _showCancelRideDialog(gigId);
+        return;
+      }
+
       await _apiClient.post(ApiEndpoints.deliveryGigCancel(), {
         "tracking_id": gigId,
         "rider_tracking_id": widget.trackingId,
@@ -1072,6 +1273,7 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
         setState(() {
           _activeGigStatus = 'No Active Gig';
           _broadcastedGig = null;
+          _routePolyline = [];
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Gig cancelled. Re-assigning to others.')),
@@ -1086,6 +1288,81 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
     }
   }
 
+  Future<void> _showCancelRideDialog(String rideId) async {
+    String selectedReason = "Passenger did not show up";
+    final reasons = [
+      "Passenger did not show up",
+      "Vehicle emergency / flat tire",
+      "Wrong pickup location given",
+      "Passenger requested cancellation",
+    ];
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Cancel Ride', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Please select a cancellation reason:'),
+              const SizedBox(height: 12),
+              ...reasons.map((r) => RadioListTile<String>(
+                    title: Text(r, style: const TextStyle(fontSize: 13)),
+                    value: r,
+                    groupValue: selectedReason,
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() => selectedReason = val);
+                      }
+                    },
+                    contentPadding: EdgeInsets.zero,
+                  )),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Back', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                try {
+                  await _apiClient.post(ApiEndpoints.rideCancel(rideId), {
+                    "reason": selectedReason,
+                    "actor_role": "rider",
+                  });
+                  await OfflineGigStorage.clearActiveGig();
+                  if (mounted) {
+                    setState(() {
+                      _activeGigStatus = 'No Active Gig';
+                      _broadcastedGig = null;
+                      _routePolyline = [];
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Ride cancelled successfully.')),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to cancel ride: $e')),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('Confirm Cancel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _statusDisplayName(String status) {
     switch (status) {
       case 'accepted':
@@ -1096,6 +1373,8 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
         return 'In Transit to Customer';
       case 'ride_accepted':
         return 'Heading to Passenger';
+      case 'ride_arrived':
+        return 'Arrived at Pickup';
       case 'ride_in_progress':
         return 'Ride In Progress';
       case 'completed':
@@ -1116,6 +1395,8 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
       case 'in_transit':
         return 'Complete Delivery';
       case 'ride_accepted':
+        return 'I Have Arrived';
+      case 'ride_arrived':
         return 'Start Ride';
       case 'ride_in_progress':
         return 'Complete Ride';
@@ -1133,6 +1414,8 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
       case 'in_transit':
         return 'completed';
       case 'ride_accepted':
+        return 'ride_arrived';
+      case 'ride_arrived':
         return 'ride_in_progress';
       case 'ride_in_progress':
         return 'ride_completed';
@@ -1244,6 +1527,9 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
   }
 
   Widget _buildMapAndGigsTab() {
+    final cashInHand = ((_walletSummary?['cash_in_hand'] as num?) ?? 0).toDouble();
+    final isCashBlocked = (_walletSummary?['is_cash_blocked'] as bool?) ?? (cashInHand >= 5000.0);
+
     return Stack(
       children: [
         // MapLibre map (proxied through Go map-service). We render surge
@@ -1369,94 +1655,183 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(30),
-                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
-                ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                GestureDetector(
-                  onTap: _showRiderProfile,
-                  behavior: HitTestBehavior.opaque,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(widget.trackingId, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.info_outline_rounded, size: 14, color: AppTheme.blackAccent),
+                          GestureDetector(
+                            onTap: _showRiderProfile,
+                            behavior: HitTestBehavior.opaque,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(widget.trackingId, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.info_outline_rounded, size: 14, color: AppTheme.blackAccent),
+                                  ],
+                                ),
+                                Text(_isOnline ? 'Status: Online' : 'Status: Offline', style: TextStyle(color: _isOnline ? Colors.green : Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Text(_isOnline ? 'Go Offline' : 'Go Online', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
+                              const SizedBox(width: 8),
+                              Switch(
+                                value: _isOnline,
+                                activeColor: AppTheme.limeAccent,
+                                activeTrackColor: AppTheme.blackAccent,
+                                onChanged: (val) async {
+                                  if (val) {
+                                    await _telemetryService.goOnline();
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('You are now ONLINE. Searching for nearby delivery gigs...'), backgroundColor: Colors.green),
+                                      );
+                                    }
+                                  } else {
+                                    await _telemetryService.goOffline();
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('You are now OFFLINE.')),
+                                      );
+                                    }
+                                  }
+                                  if (mounted) {
+                                    setState(() {
+                                      _isOnline = val;
+                                    });
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Text(_isPickAndDropActive ? 'Rides: ON' : 'Rides: OFF', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
+                              const SizedBox(width: 8),
+                              Switch(
+                                value: _isPickAndDropActive,
+                                activeColor: AppTheme.softPink,
+                                activeTrackColor: AppTheme.blackAccent,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _isPickAndDropActive = val;
+                                  });
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(val ? 'Ride-Hailing Enabled' : 'Ride-Hailing Disabled')),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
                         ],
                       ),
-                      Text(_isOnline ? 'Status: Online' : 'Status: Offline', style: TextStyle(color: _isOnline ? Colors.green : Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
-                    ],
+                    ),
                   ),
-                ),
-                Row(
-                  children: [
-                    Text(_isOnline ? 'Go Offline' : 'Go Online', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
-                    const SizedBox(width: 8),
-                    Switch(
-                      value: _isOnline,
-                      activeColor: AppTheme.limeAccent,
-                      activeTrackColor: AppTheme.blackAccent,
-                      onChanged: (val) async {
-                        if (val) {
-                          await _telemetryService.goOnline();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('You are now ONLINE. Searching for nearby delivery gigs...'), backgroundColor: Colors.green),
-                            );
-                          }
-                        } else {
-                          await _telemetryService.goOffline();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('You are now OFFLINE.')),
-                            );
-                          }
-                        }
-                        if (mounted) {
-                          setState(() {
-                            _isOnline = val;
-                          });
-                        }
-                      },
+                  if (isCashBlocked) ...[
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: _showCODCashBlockedDialog,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.red.shade400, width: 1.5),
+                          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(color: Colors.red.shade50, shape: BoxShape.circle),
+                                  child: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'COD Cash Limit (PKR ${cashInHand.toStringAsFixed(0)}) Reached!',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.red.shade800),
+                                  ),
+                                ),
+                                const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.grey),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Deliveries paused. Clear debt via Rides (Auto-Settle) or Card.',
+                              style: TextStyle(fontSize: 11, color: Colors.black87),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () {
+                                      setState(() {
+                                        _isPickAndDropActive = true;
+                                      });
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Rides Mode ON! Customer rides pick karein aur debt auto-settle karein.'),
+                                          backgroundColor: AppTheme.blackAccent,
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.directions_car, size: 14, color: Colors.white),
+                                    label: const Text('Switch to Rides', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppTheme.blackAccent,
+                                      padding: const EdgeInsets.symmetric(vertical: 6),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _showCODCashBlockedDialog,
+                                    icon: Icon(Icons.credit_card, size: 14, color: Colors.blue.shade800),
+                                    label: Text('Pay with Card', style: TextStyle(fontSize: 11, color: Colors.blue.shade800, fontWeight: FontWeight.bold)),
+                                    style: OutlinedButton.styleFrom(
+                                      side: BorderSide(color: Colors.blue.shade300),
+                                      padding: const EdgeInsets.symmetric(vertical: 6),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
-                ),
-                Row(
-                  children: [
-                    Text(_isPickAndDropActive ? 'Rides: ON' : 'Rides: OFF', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
-                    const SizedBox(width: 8),
-                    Switch(
-                      value: _isPickAndDropActive,
-                      activeColor: AppTheme.softPink,
-                      activeTrackColor: AppTheme.blackAccent,
-                      onChanged: (val) {
-                        setState(() {
-                          _isPickAndDropActive = val;
-                        });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(val ? 'Ride-Hailing Enabled' : 'Ride-Hailing Disabled')),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-        ),
-      ),
-    ),
 
         // Bottom Action Card (Dribbble styled popup panel)
         Positioned(
@@ -1538,9 +1913,64 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
                   ),
                   const SizedBox(height: 8),
                   if (_activeGigStatus.startsWith('ride_')) ...[
-                    Text(
-                      'Vehicle: ${_broadcastedGig?['vehicle_type'] ?? 'Standard'}\nFare: PKR ${_broadcastedGig?['fare_amount'] ?? 'N/A'}',
-                      style: const TextStyle(color: Colors.grey, fontSize: 13),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(8)),
+                          child: Text(
+                            (_broadcastedGig?['vehicle_type']?.toString().toUpperCase()) ?? 'STANDARD',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Fare: PKR ${_broadcastedGig?['fare_amount'] ?? '0'}',
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.green),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: ((_broadcastedGig?['payment_method']?.toString().toLowerCase() ?? 'cash') == 'cash')
+                                ? Colors.amber.shade50
+                                : Colors.blue.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: ((_broadcastedGig?['payment_method']?.toString().toLowerCase() ?? 'cash') == 'cash')
+                                  ? Colors.amber.shade400
+                                  : Colors.blue.shade300,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                ((_broadcastedGig?['payment_method']?.toString().toLowerCase() ?? 'cash') == 'cash')
+                                    ? Icons.payments_outlined
+                                    : Icons.credit_card_outlined,
+                                size: 14,
+                                color: ((_broadcastedGig?['payment_method']?.toString().toLowerCase() ?? 'cash') == 'cash')
+                                    ? Colors.amber.shade900
+                                    : Colors.blue.shade900,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                ((_broadcastedGig?['payment_method']?.toString().toLowerCase() ?? 'cash') == 'cash')
+                                    ? 'CASH'
+                                    : 'ONLINE',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                  color: ((_broadcastedGig?['payment_method']?.toString().toLowerCase() ?? 'cash') == 'cash')
+                                      ? Colors.amber.shade900
+                                      : Colors.blue.shade900,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ] else ...[
                     Text(
@@ -1580,8 +2010,8 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
                         Expanded(
                           child: OutlinedButton.icon(
                             onPressed: () {
-                              final orderId = _broadcastedGig?['order_tracking_id']?.toString() ?? '';
-                              final customerId = _broadcastedGig?['customer_tracking_id']?.toString() ?? 'customer';
+                              final orderId = (_broadcastedGig?['order_tracking_id'] ?? _broadcastedGig?['tracking_id'])?.toString() ?? '';
+                              final customerId = (_broadcastedGig?['customer_tracking_id'] ?? _broadcastedGig?['customer_id'])?.toString() ?? 'customer';
                               if (orderId.isEmpty) return;
                               Navigator.push(
                                 context,
@@ -1613,7 +2043,7 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                       child: Text(_nextStatusButtonLabel()!, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
                     ),
-                  if (_activeGigStatus == 'accepted' || _activeGigStatus == 'picked_up' || _activeGigStatus == 'ride_accepted')
+                  if (_activeGigStatus == 'accepted' || _activeGigStatus == 'picked_up' || _activeGigStatus == 'ride_accepted' || _activeGigStatus == 'ride_in_progress')
                     ElevatedButton.icon(
                       onPressed: _startNavigation,
                       icon: const Icon(Icons.navigation, color: Colors.white),
@@ -1624,7 +2054,7 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
                   OutlinedButton(
                     onPressed: _cancelGig,
                     style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text('Cancel Order', style: TextStyle(fontWeight: FontWeight.bold)),
+                    child: Text(_activeGigStatus.startsWith('ride_') ? 'Cancel Ride' : 'Cancel Order', style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ],
               ],
@@ -2255,10 +2685,153 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
     );
   }
 
+  void _showCODCashBlockedDialog() {
+    final pendingDebts = _codDebts.where((d) => (d['status']?.toString() ?? '') == 'pending').toList();
+    final totalOwed = pendingDebts.fold<double>(0, (sum, d) => sum + ((d['amount_owed'] as num?) ?? 0).toDouble());
+    final cashInHand = ((_walletSummary?['cash_in_hand'] as num?) ?? 0).toDouble();
+    final displayAmount = totalOwed > 0 ? totalOwed : (cashInHand > 0 ? cashInHand : 5000.0);
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: Colors.red.shade50, shape: BoxShape.circle),
+              child: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'COD Cash Limit (PKR 5,000)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Aapke paas COD deliveries ka cash float (PKR ${displayAmount.toStringAsFixed(0)}) jama ho chuka hai. Mazeed cash deliveries lene ke liye qarza utarein.',
+              style: const TextStyle(fontSize: 13, color: Colors.black87),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.softPink,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.blackAccent.withValues(alpha: 0.15)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.directions_car, size: 18, color: AppTheme.blackAccent),
+                      SizedBox(width: 6),
+                      Text(
+                        'Rasta 1: Rides se Kamayein & Debt Utarein',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppTheme.blackAccent),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Pick & Drop rides chalaayein! Har ride ki kamai aapke COD qarze se automatically deduct/clear hoti jayegi aur limit khul jayegi.',
+                    style: TextStyle(fontSize: 11, color: Colors.black87),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.credit_card, size: 18, color: Colors.blue.shade800),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Rasta 2: PayFast / Card se Foran Deposit',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade900),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Debit/Credit card se PayFast gateway ke zariye foran COD cash deposit karein taake delivery gigs foran unblock ho jayein.',
+                    style: TextStyle(fontSize: 11, color: Colors.blue.shade900),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (pendingDebts.isNotEmpty) {
+                final firstDebt = pendingDebts.first as Map<String, dynamic>;
+                final debtId = firstDebt['id']?.toString() ?? '';
+                final amount = ((firstDebt['amount_owed'] as num?) ?? 0).toDouble();
+                final orderId = firstDebt['order_tracking_id']?.toString() ?? '';
+                _showPayDebtDialog(debtId, amount, orderId);
+              } else {
+                setState(() {
+                  _selectedTabIndex = 2; // Switch to COD Ledger tab
+                });
+              }
+            },
+            icon: const Icon(Icons.payment, size: 16),
+            label: const Text('Pay Online'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.blue.shade800,
+              side: BorderSide(color: Colors.blue.shade300),
+            ),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() {
+                _isPickAndDropActive = true;
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Rides Mode ON! Customer rides pick karein aur debt auto-settle karein.'),
+                  backgroundColor: AppTheme.blackAccent,
+                ),
+              );
+            },
+            icon: const Icon(Icons.directions_car, size: 16, color: Colors.white),
+            label: const Text('Switch to Rides', style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.blackAccent),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showPayDebtDialog(String codDebtId, double amount, String orderId) {
     Navigator.push(
       context,
-      MaterialPageRoute(
+      MaterialPageRoute<void>(
         builder: (_) => RiderCODCardPaymentScreen(
           orderTrackingID: orderId,
           amountOwed: amount,

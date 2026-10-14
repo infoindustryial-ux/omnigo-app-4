@@ -18,6 +18,10 @@ export PAYFAST_SECURED_KEY="zWHjBp2AlttNu1sK"
 export PAYFAST_API_URL="https://ipguat.apps.net.pk/Ecommerce/api"
 export PAYFAST_BASE_URL="https://ipguat.apps.net.pk/Ecommerce/api"
 export PAYFAST_MERCHANT_NAME="OMNIGO"
+export SAFEPAY_AGGREGATOR_ID="${SAFEPAY_AGGREGATOR_ID:-aggr_omnigo_sandbox}"
+export SAFEPAY_SECRET_KEY="${SAFEPAY_SECRET_KEY:-sec_safepay_sandbox_key}"
+export SAFEPAY_BASE_URL="${SAFEPAY_BASE_URL:-https://dev.api.getsafepay.com}"
+export SAFEPAY_PAYOUT_FEE_PAISA="${SAFEPAY_PAYOUT_FEE_PAISA:-2000}"
 
 killall monolith || true
 nohup ./monolith > monolith.log 2>&1 &

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	orderModels "github.com/omnigo/backend/internal/order/models"
 	"github.com/omnigo/backend/internal/payment/payfast"
+	"github.com/omnigo/backend/internal/payment/safepay"
 	"github.com/omnigo/backend/internal/shared/messaging"
 	"github.com/omnigo/backend/internal/shared/middleware"
 	"github.com/omnigo/backend/internal/wallet/service"
@@ -554,12 +555,44 @@ func (h *WalletHandler) RegisterRoutes(router *gin.Engine) {
 			// Customer Wallet
 			auth.GET("/customer/:tracking_id", h.GetCustomerWallet)
 			auth.POST("/customer/load", h.LoadCustomerWallet)
+			auth.POST("/customer/:tracking_id/withdraw", h.RequestCustomerWithdrawal)
 		}
 
 		// Note: /rider/:tracking_id/deposit is registered once above in the auth
 		// group. The handler checks role == "admin" internally. Do NOT register
 		// it again here — Gin panics on duplicate route+method pairs.
 	}
+}
+
+// RequestCustomerWithdrawal handles POST /api/v1/wallet/customer/:tracking_id/withdraw
+func (h *WalletHandler) RequestCustomerWithdrawal(c *gin.Context) {
+	if h.customerWallet == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "customer wallet service not configured"})
+		return
+	}
+
+	targetID := c.Param("tracking_id")
+	requesterID := middleware.GetTrackingID(c)
+	role := middleware.GetRole(c)
+	if role != "admin" && requesterID != targetID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "can only withdraw from your own wallet"})
+		return
+	}
+
+	var req service.CustomerWithdrawalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid withdrawal request: " + err.Error()})
+		return
+	}
+	req.CustomerTrackingID = targetID
+
+	resp, err := h.customerWallet.RequestWithdrawal(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetCustomerWallet handles GET /api/v1/wallet/customer/:tracking_id
@@ -620,8 +653,8 @@ func (h *WalletHandler) LoadCustomerWallet(c *gin.Context) {
 	}
 
 	gateway := strings.ToLower(req.Gateway)
-	if gateway != "payfast" && gateway != "jazzcash" && gateway != "easypaisa" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "gateway must be 'payfast', 'jazzcash' or 'easypaisa'"})
+	if gateway != "safepay" && gateway != "payfast" && gateway != "jazzcash" && gateway != "easypaisa" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "gateway must be 'safepay', 'payfast', 'jazzcash' or 'easypaisa'"})
 		return
 	}
 
@@ -645,6 +678,42 @@ func (h *WalletHandler) LoadCustomerWallet(c *gin.Context) {
 		AmountCents:        req.AmountCents,
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record pending top-up: " + err.Error()})
+		return
+	}
+
+	if gateway == "safepay" {
+		safepayClient := safepay.NewClientFromEnv()
+		if !safepayClient.IsConfigured() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Safepay is not configured on the server"})
+			return
+		}
+
+		tracker, err := safepayClient.CreateTracker(c.Request.Context(), safepay.TrackerRequest{
+			Currency:  "PKR",
+			Amount:    req.AmountCents,
+			EntryMode: "hosted",
+			Metadata: map[string]string{
+				"customer_id":     requesterID,
+				"internal_txn_id": txnID,
+				"purpose":         "wallet_topup",
+			},
+		})
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to initialize Safepay top-up: " + err.Error()})
+			return
+		}
+
+		hostedURL := safepayClient.BuildCheckoutURL(tracker.Token)
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":         "pending_redirect",
+			"gateway":        gateway,
+			"redirect_url":   hostedURL,
+			"tracking_id":    requesterID,
+			"amount":         req.Amount,
+			"amount_cents":   req.AmountCents,
+			"transaction_id": txnID,
+		})
 		return
 	}
 
@@ -894,6 +963,42 @@ func (h *WalletHandler) LoadCustomerWalletCallback(c *gin.Context) {
 		customerTrackingID = pending.CustomerTrackingID
 		txnID = txnRef
 		amountPKR = pending.AmountPKR
+	} else if gateway == "safepay" {
+		tracker := c.Query("tracker")
+		if tracker == "" {
+			tracker = c.Request.FormValue("tracker")
+		}
+		if tracker == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing tracker token in Safepay callback"})
+			return
+		}
+
+		safepayClient := safepay.NewClientFromEnv()
+		paymentDetails, err := safepayClient.GetPaymentDetails(c.Request.Context(), tracker)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to verify payment details: " + err.Error()})
+			return
+		}
+
+		if paymentDetails.State != "PAID" && paymentDetails.State != "CAPTURED" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "payment not completed at Safepay (state: " + paymentDetails.State + ")"})
+			return
+		}
+
+		txnRef := paymentDetails.Metadata["internal_txn_id"]
+		if txnRef == "" {
+			txnRef = tracker
+		}
+
+		pending, err := h.consumePendingWalletLoad(c.Request.Context(), txnRef)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "no matching pending top-up for this transaction"})
+			return
+		}
+
+		customerTrackingID = pending.CustomerTrackingID
+		txnID = txnRef
+		amountPKR = pending.AmountPKR
 	} else {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported or missing gateway"})
 		return
@@ -908,6 +1013,12 @@ func (h *WalletHandler) LoadCustomerWalletCallback(c *gin.Context) {
 	err := h.customerWallet.CreditFunds(c.Request.Context(), customerTrackingID, txnID, amountPaisa)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to credit customer wallet: " + err.Error()})
+		return
+	}
+
+	if strings.Contains(c.GetHeader("Accept"), "text/html") || c.Request.Method == http.MethodGet {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, `<!DOCTYPE html><html><body style="font-family: sans-serif; text-align: center; padding-top: 50px;"><h2 style="color: #16a34a;">✓ Wallet Top-up Successful!</h2><p>PKR `+fmt.Sprintf("%.2f", amountPKR)+` has been added to your balance. You may return to the OMNIGO app.</p></body></html>`)
 		return
 	}
 

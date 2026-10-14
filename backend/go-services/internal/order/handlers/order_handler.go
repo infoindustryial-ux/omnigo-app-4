@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +53,13 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 
 	order, err := h.svc.CreateOrder(c.Request.Context(), &req)
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "OUT_OF_STOCK") || strings.HasPrefix(err.Error(), "INSUFFICIENT_STOCK") {
+			c.AbortWithStatusJSON(http.StatusConflict, gin.H{
+				"error":   "OUT_OF_STOCK",
+				"message": err.Error(),
+			})
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -455,6 +463,16 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 		return
 	}
 
+	// Food / grocery waste protection: Once vendor has accepted and started preparation,
+	// only an admin can cancel (or support can mediate).
+	if order.Status == "accepted" && role != "admin" {
+		c.AbortWithStatusJSON(http.StatusConflict, gin.H{
+			"error":   "ORDER_PREPARING",
+			"message": "Order is already accepted and being prepared by the vendor. Please contact support to request cancellation.",
+		})
+		return
+	}
+
 	if err := h.svc.UpdateOrderStatus(c.Request.Context(), trackingID, "cancelled"); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -492,12 +510,19 @@ func (h *OrderHandler) triggerRefund(ctx context.Context, orderID, reason string
 		return
 	}
 
+	// Calculate refund amount: Ensure customer gets 100% of what they actually paid
+	// (including delivery fee) via total_billed_amount_paisa if present.
+	refundAmount := order.TotalAmount
+	if order.TotalBilledAmountPaisa > 0 {
+		refundAmount = float64(order.TotalBilledAmountPaisa) / 100.0
+	}
+
 	// C3 FIX: Write to outbox_events table (same DB transaction as order status update
 	// when possible). The RefundOutboxWorker will pick this up and emit to Kafka.
 	payload := map[string]interface{}{
 		"order_id":      orderID,
 		"reason":        reason,
-		"refund_amount": order.TotalAmount,
+		"refund_amount": refundAmount,
 		"currency":      order.Currency,
 		"refund_to":     "original",
 		"timestamp":     time.Now().UnixMilli(),

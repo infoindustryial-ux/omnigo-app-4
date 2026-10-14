@@ -416,10 +416,13 @@ type RideBroadcastMessage struct {
 
 func (gw *WebSocketGateway) handleRideBroadcast(data []byte) {
 	var broadcast struct {
+		Action          string   `json:"action"`
 		TrackingID      string   `json:"tracking_id"`
 		VehicleType     string   `json:"vehicle_type"`
 		PickupLat       float64  `json:"pickup_lat"`
 		PickupLng       float64  `json:"pickup_lng"`
+		DropoffLat      float64  `json:"dropoff_lat"`
+		DropoffLng      float64  `json:"dropoff_lng"`
 		FareAmount      float64  `json:"fare_amount"`
 		EligibleDrivers []string `json:"eligible_drivers"`
 	}
@@ -428,16 +431,7 @@ func (gw *WebSocketGateway) handleRideBroadcast(data []byte) {
 		return
 	}
 
-	msg := RideBroadcastMessage{
-		Action:      "RIDE_BROADCAST",
-		TrackingID:  broadcast.TrackingID,
-		VehicleType: broadcast.VehicleType,
-		PickupLat:   broadcast.PickupLat,
-		PickupLng:   broadcast.PickupLng,
-		FareAmount:  broadcast.FareAmount,
-	}
-
-	payload, _ := json.Marshal(msg)
+	payload := data
 
 	type target struct {
 		id   string
@@ -446,9 +440,16 @@ func (gw *WebSocketGateway) handleRideBroadcast(data []byte) {
 	var targets []target
 
 	gw.mu.Lock()
-	for _, driverID := range broadcast.EligibleDrivers {
-		if conn, ok := gw.riders[driverID]; ok {
-			targets = append(targets, target{id: driverID, conn: conn})
+	if len(broadcast.EligibleDrivers) > 0 {
+		for _, driverID := range broadcast.EligibleDrivers {
+			if conn, ok := gw.riders[driverID]; ok {
+				targets = append(targets, target{id: driverID, conn: conn})
+			}
+		}
+	} else {
+		// Broadcast to all connected active riders
+		for riderID, conn := range gw.riders {
+			targets = append(targets, target{id: riderID, conn: conn})
 		}
 	}
 	gw.mu.Unlock()
@@ -462,15 +463,34 @@ func (gw *WebSocketGateway) handleRideBroadcast(data []byte) {
 	}
 }
 
+// handleRideEvents routes real-time ride events (RIDE_ACCEPTED, RIDER_COUNTER_OFFER) to customer and rider sockets.
+func (gw *WebSocketGateway) handleRideEvents(data []byte) {
+	var ev struct {
+		Action             string `json:"action"`
+		TrackingID         string `json:"tracking_id"`
+		CustomerTrackingID string `json:"customer_tracking_id"`
+		RiderTrackingID    string `json:"rider_tracking_id"`
+	}
+	if err := json.Unmarshal(data, &ev); err != nil {
+		log.Printf("Failed to unmarshal ride event: %v", err)
+		return
+	}
+
+	if ev.CustomerTrackingID != "" {
+		gw.sendToCustomer(ev.CustomerTrackingID, data)
+	}
+	if ev.RiderTrackingID != "" {
+		gw.sendToRider(ev.RiderTrackingID, data)
+	}
+}
+
 func (gw *WebSocketGateway) StartRedisConsumer(ctx context.Context) {
-	// Subscribe to both chat.broadcast (existing chat plumbing) and
-	// rider:telemetry:pubsub (syncworker → ws gateway telemetry bridge so
-	// customers and vendors can see the rider moving on the map).
-	pubsub := gw.redisClient.Subscribe(ctx, "chat.broadcast", "rider:telemetry:pubsub")
+	// Subscribe to chat.broadcast, rider:telemetry:pubsub, rides:broadcast, and rides:events
+	pubsub := gw.redisClient.Subscribe(ctx, "chat.broadcast", "rider:telemetry:pubsub", "rides:broadcast", "rides:events")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
-	log.Println("Redis Pub/Sub consumer started — listening on chat.broadcast, rider:telemetry:pubsub")
+	log.Println("Redis Pub/Sub consumer started — listening on chat.broadcast, rider:telemetry:pubsub, rides:broadcast, rides:events")
 
 	for msg := range ch {
 		switch msg.Channel {
@@ -478,6 +498,10 @@ func (gw *WebSocketGateway) StartRedisConsumer(ctx context.Context) {
 			gw.dispatchChatBroadcast([]byte(msg.Payload))
 		case "rider:telemetry:pubsub":
 			gw.dispatchTelemetryBroadcast(ctx, []byte(msg.Payload))
+		case "rides:broadcast":
+			gw.handleRideBroadcast([]byte(msg.Payload))
+		case "rides:events":
+			gw.handleRideEvents([]byte(msg.Payload))
 		}
 	}
 }

@@ -121,10 +121,11 @@ func (h *CODHandler) Confirm(c *gin.Context) {
 	// service at delivery completion (CreateCODDebtLedger) to ensure the rider_cod_debt
 	// account is always credited before SettleWebhook debits it.
 	codDebtID := uuid.New()
+	amountRupees := float64(amountPaisa) / 100.0
 	_, err = h.db.Exec(ctx,
-		`INSERT INTO cod_debts (id, order_tracking_id, rider_tracking_id, amount_owed, status)
-		 VALUES ($1, $2, $3, $4, 'pending')`,
-		codDebtID, req.OrderTrackingID, req.RiderTrackingID, amountPaisa,
+		`INSERT INTO cod_debts (id, order_tracking_id, rider_tracking_id, amount, amount_owed, amount_owed_paisa, status, created_at)
+		 VALUES ($1, $2, $3, $4, $4, $5, 'pending', NOW())`,
+		codDebtID, req.OrderTrackingID, req.RiderTrackingID, amountRupees, amountPaisa,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create COD debt record: " + err.Error()})
@@ -454,9 +455,13 @@ func (h *CODHandler) Settlement(c *gin.Context) {
 		return
 	}
 
-	// Decrement rider cash_in_hand_paisa
+	// Decrement rider cash_in_hand_paisa and auto-unblock if below 5000 PKR threshold
 	tag, err := tx.Exec(ctx,
-		`UPDATE rider_wallet SET cash_in_hand_paisa = GREATEST(0, cash_in_hand_paisa - $1), updated_at = NOW() WHERE rider_tracking_id = $2`,
+		`UPDATE rider_wallet 
+		 SET cash_in_hand_paisa = GREATEST(0, cash_in_hand_paisa - $1),
+		     is_cash_blocked = (GREATEST(0, cash_in_hand_paisa - $1) >= 500000),
+		     updated_at = NOW() 
+		 WHERE rider_tracking_id = $2`,
 		amountOwedPaisa, riderID,
 	)
 	if err != nil {

@@ -88,6 +88,10 @@ class CartProvider extends ChangeNotifier {
       throw Exception('Invalid product data. Cannot add to cart.');
     }
 
+    if (product.stock <= 0) {
+      throw Exception('OUT_OF_STOCK');
+    }
+
     if (_items.isNotEmpty && _items.values.first.storeTrackingId != storeTrackingId) {
       if (clearIfDifferentStore) {
         _items.clear();

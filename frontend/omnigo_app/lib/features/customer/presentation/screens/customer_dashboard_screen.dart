@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/services/session_registry.dart';
 import '../../../../core/network/api_endpoints.dart';
@@ -89,6 +91,20 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   LatLng? _rideDropoffLatLng;
   bool _isEstimatingRide = false;
   Timer? _estimateSafetyTimer;
+
+  // ── Ride Radar & Driver Discovery State ─────────────────────────
+  String? _activeRideTrackingId;
+  String _rideSearchStatus = 'idle'; // 'idle' | 'searching' | 'offers_received' | 'accepted'
+  double _activeRideFare = 0.0;
+  String _activeRideVehicleType = 'car';
+  String _activeRidePaymentMethod = 'cash'; // 'cash' | 'wallet'
+  int _nearbyRidersCount = 0;
+  double _searchRadiusKm = 3.0;
+  Timer? _radarSearchTimer;
+  int _searchElapsedSeconds = 0;
+  List<Map<String, dynamic>> _liveBids = [];
+  Map<String, dynamic>? _acceptedRiderInfo;
+  StreamSubscription<dynamic>? _wsRideEventsSub;
 
   // ── Delivery Route Tracking (Active Order on Map) ──────────────────
   List<LatLng> _deliveryRoutePolyline = [];
@@ -271,6 +287,8 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _estimateSafetyTimer?.cancel();
+    _radarSearchTimer?.cancel();
+    _wsRideEventsSub?.cancel();
     _wsSub?.cancel();
     _wsOrderTopicSub?.cancel();
     _wsStateSub?.cancel();
@@ -418,6 +436,401 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         }
       } catch (_) {}
     });
+
+    // ── Ride Events Stream: Counter-Offers & Driver Acceptance ──────
+    _wsRideEventsSub = _wsClient!.stream.listen((raw) {
+      if (raw is! String) return;
+      try {
+        final frame = jsonDecode(raw) as Map<String, dynamic>;
+        final action = frame['action']?.toString() ?? '';
+        if (action == 'RIDER_COUNTER_OFFER') {
+          _handleRiderCounterOffer(frame);
+        } else if (action == 'RIDE_ACCEPTED') {
+          _handleRideAccepted(frame);
+        } else if (action == 'RIDE_STATUS_UPDATED') {
+          _handleRideStatusUpdated(frame);
+        } else if (action == 'RIDE_COMPLETED') {
+          _handleRideCompleted(frame);
+        } else if (action == 'RIDE_CANCELLED') {
+          _handleRideCancelled(frame);
+        }
+      } catch (_) {}
+    });
+  }
+
+  void _handleRiderCounterOffer(Map<String, dynamic> frame) {
+    if (!mounted) return;
+    final rideId = frame['tracking_id']?.toString() ?? '';
+    if (_activeRideTrackingId != null && rideId != _activeRideTrackingId) return;
+
+    final bidId = (frame['bid_id'] as num?)?.toInt() ?? 0;
+    final riderTrackId = frame['rider_tracking_id']?.toString() ?? '';
+    final riderName = frame['rider_name']?.toString() ?? 'Captain';
+    final riderPhone = frame['rider_phone']?.toString() ?? '';
+    final vehicleType = frame['vehicle_type']?.toString() ?? 'bike';
+    final vehiclePlate = frame['vehicle_plate']?.toString() ?? 'LHR-LIVE';
+    final bidAmount = (frame['bid_amount'] ?? frame['proposed_fare'] as num?)?.toDouble() ?? _activeRideFare;
+    final rating = frame['rating']?.toString() ?? '4.8 ★';
+    final eta = frame['eta']?.toString() ?? '3 min';
+
+    setState(() {
+      final exists = _liveBids.any((b) => b['bid_id'] == bidId || b['rider_tracking_id'] == riderTrackId);
+      if (!exists) {
+        _liveBids.add({
+          'bid_id': bidId,
+          'rider_tracking_id': riderTrackId,
+          'rider_name': riderName,
+          'rider_phone': riderPhone,
+          'vehicle_type': vehicleType,
+          'vehicle_plate': vehiclePlate,
+          'bid_amount': bidAmount,
+          'rating': rating,
+          'eta': eta,
+        });
+        _rideSearchStatus = 'offers_received';
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('⚡ New Offer from $riderName: PKR ${bidAmount.toStringAsFixed(0)}'),
+        backgroundColor: const Color(0xFF1B2A10),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _handleRideAccepted(Map<String, dynamic> frame) {
+    if (!mounted) return;
+    final rideId = frame['tracking_id']?.toString() ?? '';
+    if (_activeRideTrackingId != null && rideId != _activeRideTrackingId) return;
+
+    _radarSearchTimer?.cancel();
+    setState(() {
+      _rideSearchStatus = 'accepted';
+      _acceptedRiderInfo = {
+        'tracking_id': rideId,
+        'rider_tracking_id': frame['rider_tracking_id']?.toString() ?? '',
+        'rider_name': frame['rider_name']?.toString() ?? 'Captain',
+        'rider_phone': frame['rider_phone']?.toString() ?? '',
+        'vehicle_type': frame['vehicle_type']?.toString() ?? 'bike',
+        'vehicle_plate': frame['vehicle_plate']?.toString() ?? 'LHR-LIVE',
+        'fare_amount': (frame['fare_amount'] as num?)?.toDouble() ?? _activeRideFare,
+        'status': 'accepted',
+        'rating': '4.9 ★',
+      };
+      _liveBids.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('🎉 Driver Accepted! ${_acceptedRiderInfo!['rider_name']} is arriving.'),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _handleRideStatusUpdated(Map<String, dynamic> frame) {
+    if (!mounted) return;
+    final rideId = frame['tracking_id']?.toString() ?? '';
+    if (_activeRideTrackingId != null && rideId != _activeRideTrackingId) return;
+
+    final status = frame['status']?.toString() ?? '';
+    setState(() {
+      if (_acceptedRiderInfo != null) {
+        _acceptedRiderInfo!['status'] = status;
+      }
+    });
+
+    String bannerText = 'Ride status updated: $status';
+    if (status == 'in_progress') {
+      bannerText = '🚗 Ride Started! Heading towards destination.';
+    } else if (status == 'arrived') {
+      bannerText = '📍 Captain has arrived at your pickup location!';
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(bannerText),
+        backgroundColor: const Color(0xFF1B2A10),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _handleRideCompleted(Map<String, dynamic> frame) {
+    if (!mounted) return;
+    final rideId = frame['tracking_id']?.toString() ?? '';
+    if (_activeRideTrackingId != null && rideId != _activeRideTrackingId) return;
+
+    _radarSearchTimer?.cancel();
+    final double finalFare = (frame['final_fare'] as num?)?.toDouble() ?? _activeRideFare;
+    final String paymentMethod = frame['payment_method']?.toString() ?? _activeRidePaymentMethod;
+    final riderInfo = _acceptedRiderInfo ?? {};
+    final String riderName = riderInfo['rider_name']?.toString() ?? 'Captain';
+    final String vehiclePlate = riderInfo['vehicle_plate']?.toString() ?? 'LHR-LIVE';
+
+    setState(() {
+      _rideSearchStatus = 'idle';
+      _activeRideTrackingId = null;
+      _liveBids.clear();
+      _acceptedRiderInfo = null;
+      _rideRoutePolyline.clear();
+      _mapMarkers.removeWhere((k, _) => k.startsWith('driver_') || k == 'pickup' || k == 'dropoff');
+    });
+
+    _showRideReceiptAndRatingSheet(rideId, finalFare, paymentMethod, riderName, vehiclePlate);
+  }
+
+  void _handleRideCancelled(Map<String, dynamic> frame) {
+    if (!mounted) return;
+    final rideId = frame['tracking_id']?.toString() ?? '';
+    if (_activeRideTrackingId != null && rideId != _activeRideTrackingId) return;
+
+    _radarSearchTimer?.cancel();
+    setState(() {
+      _rideSearchStatus = 'idle';
+      _activeRideTrackingId = null;
+      _liveBids.clear();
+      _acceptedRiderInfo = null;
+      _rideRoutePolyline.clear();
+      _mapMarkers.removeWhere((k, _) => k.startsWith('driver_') || k == 'pickup' || k == 'dropoff');
+    });
+
+    final reason = frame['reason']?.toString() ?? 'Driver or Customer cancelled';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('⚠️ Ride cancelled: $reason'),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showRideReceiptAndRatingSheet(
+    String rideId,
+    double fare,
+    String paymentMethod,
+    String riderName,
+    String vehiclePlate,
+  ) {
+    unawaited(showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black87,
+      builder: (context) {
+        double selectedRating = 5.0;
+        double selectedTip = 0.0;
+        final TextEditingController commentController = TextEditingController();
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(36)),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 30),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141414),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(36)),
+                      border: Border.all(color: Colors.white.withOpacity(0.12)),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Colors.white24,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const CircleAvatar(
+                          radius: 28,
+                          backgroundColor: Color(0xFFCAFF33),
+                          child: Icon(Icons.check_rounded, color: Colors.black, size: 36),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Trip Completed!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'Outfit',
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'PKR ${fare.toStringAsFixed(0)}',
+                          style: const TextStyle(
+                            color: Color(0xFFCAFF33),
+                            fontSize: 32,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: 'Outfit',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                paymentMethod == 'wallet'
+                                    ? Icons.account_balance_wallet_outlined
+                                    : (paymentMethod == 'card' || paymentMethod == 'safepay'
+                                        ? Icons.credit_card_outlined
+                                        : Icons.payments_outlined),
+                                color: Colors.white70,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                paymentMethod == 'wallet'
+                                    ? 'Deducted from OMNIGO Wallet'
+                                    : (paymentMethod == 'card' || paymentMethod == 'safepay'
+                                        ? 'Paid Online via Card / Safepay'
+                                        : 'Paid in Cash to Captain'),
+                                style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (paymentMethod == 'cash') ...[
+                          const SizedBox(height: 6),
+                          InkWell(
+                            onTap: () {
+                              setSheetState(() {
+                                paymentMethod = 'safepay';
+                              });
+                            },
+                            child: const Text(
+                              'Out of cash? Pay online via Card / Safepay ➔',
+                              style: TextStyle(
+                                color: Color(0xFFCAFF33),
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 20),
+                        const Divider(color: Colors.white10),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Rate Captain $riderName ($vehiclePlate)',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(5, (index) {
+                            final star = index + 1;
+                            return IconButton(
+                              onPressed: () => setSheetState(() => selectedRating = star.toDouble()),
+                              icon: Icon(
+                                star <= selectedRating ? Icons.star_rounded : Icons.star_outline_rounded,
+                                color: Colors.amber,
+                                size: 36,
+                              ),
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('Add Tip: ', style: TextStyle(color: Colors.white60, fontSize: 13)),
+                            const SizedBox(width: 8),
+                            for (final tip in [20.0, 50.0, 100.0])
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                child: ChoiceChip(
+                                  label: Text('+ PKR ${tip.toStringAsFixed(0)}'),
+                                  selected: selectedTip == tip,
+                                  onSelected: (sel) => setSheetState(() => selectedTip = sel ? tip : 0.0),
+                                  selectedColor: const Color(0xFFCAFF33),
+                                  backgroundColor: Colors.white10,
+                                  labelStyle: TextStyle(
+                                    color: selectedTip == tip ? Colors.black : Colors.white70,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: commentController,
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Leave a note for the captain (optional)',
+                            hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.05),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            try {
+                              await sl<ApiClient>().post('/rides/$rideId/rate', {
+                                'rating': selectedRating,
+                                'comment': commentController.text.trim(),
+                                'tip_amount': selectedTip,
+                              });
+                            } catch (_) {}
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('⭐ Thank you for rating your ride!'),
+                                  backgroundColor: Color(0xFFCAFF33),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFCAFF33),
+                            foregroundColor: Colors.black,
+                            minimumSize: const Size(double.infinity, 54),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                          ),
+                          child: const Text('Submit & Done', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ),);
   }
 
   /// Applies a real-time order status update received via WebSocket.
@@ -718,7 +1131,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           builder: (context) {
             return VehicleSelectorSheet(
               estimates: estimates,
-              onBookRide: (type, fare) => _bookRideConfirmation(type, fare),
+              onBookRide: (type, fare, method) => _bookRideConfirmation(type, fare, method),
             );
           },
         ),);
@@ -733,12 +1146,13 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  void _bookRideConfirmation(String vehicleType, double fare) {
-    _requestRide(vehicleType, fare);
+  void _bookRideConfirmation(String vehicleType, double fare, String paymentMethod) {
+    _requestRide(vehicleType, fare, paymentMethod);
   }
 
-  Future<void> _requestRide(String vehicleType, double fare) async {
+  Future<void> _requestRide(String vehicleType, double fare, String paymentMethod) async {
     if (_ridePickupLatLng == null || _rideDropoffLatLng == null) return;
+    _activeRidePaymentMethod = paymentMethod;
 
     unawaited(showDialog<void>(
       context: context,
@@ -749,7 +1163,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     ),);
 
     try {
-      await sl<ApiClient>().post('/rides/', {
+      final response = await sl<ApiClient>().post('/rides/', {
         'customer_tracking_id': widget.trackingId,
         'vehicle_type': vehicleType,
         'pickup_lat': _ridePickupLatLng!.latitude,
@@ -757,11 +1171,13 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         'dropoff_lat': _rideDropoffLatLng!.latitude,
         'dropoff_lng': _rideDropoffLatLng!.longitude,
         'fare_amount': fare,
+        'payment_method': paymentMethod,
       });
 
       if (mounted) {
         Navigator.pop(context); // pop spinner
-        _showSuccessRideDialog(vehicleType, fare);
+        final rideData = response is Map<String, dynamic> ? response : <String, dynamic>{};
+        _startRideRadarSearch(rideData, vehicleType, fare);
       }
     } catch (e) {
       if (mounted) {
@@ -773,63 +1189,604 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  void _showSuccessRideDialog(String vehicleType, double fare) {
-    unawaited(showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF121212),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: Colors.white.withOpacity(0.08)),
+  void _startRideRadarSearch(Map<String, dynamic> rideData, String vehicleType, double fare) {
+    final trackingId = rideData['tracking_id']?.toString() ?? '';
+    final nearbyCount = (rideData['nearby_riders_count'] as num?)?.toInt() ?? 3;
+    final searchRadius = (rideData['search_radius_km'] as num?)?.toDouble() ?? 3.0;
+
+    setState(() {
+      _activeRideTrackingId = trackingId;
+      _rideSearchStatus = 'searching';
+      _activeRideFare = fare;
+      _activeRideVehicleType = vehicleType;
+      _nearbyRidersCount = nearbyCount > 0 ? nearbyCount : 3;
+      _searchRadiusKm = searchRadius;
+      _searchElapsedSeconds = 0;
+      _liveBids = [];
+      _acceptedRiderInfo = null;
+
+      // Keep pickup and dropoff markers pinned
+      if (_ridePickupLatLng != null) {
+        _mapMarkers['pickup'] = MarkerData(position: _ridePickupLatLng!, iconSize: 1.2);
+      }
+      if (_rideDropoffLatLng != null) {
+        _mapMarkers['dropoff'] = MarkerData(position: _rideDropoffLatLng!, iconSize: 1.2);
+      }
+    });
+
+    // Pan camera to pickup location
+    if (_mapController != null && _ridePickupLatLng != null) {
+      _mapController!.animateCamera(
+        CameraUpdate.newLatLngZoom(_ridePickupLatLng!, 14.5),
+      );
+    }
+
+    // Discover nearby drivers and mark on map
+    if (_ridePickupLatLng != null) {
+      _fetchNearbyDriversForMap(_ridePickupLatLng!.latitude, _ridePickupLatLng!.longitude);
+    }
+
+    // Start expanding search radar timer
+    _radarSearchTimer?.cancel();
+    _radarSearchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || (_rideSearchStatus != 'searching' && _rideSearchStatus != 'offers_received')) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _searchElapsedSeconds++;
+        if (_searchElapsedSeconds % 4 == 0 && _searchRadiusKm < 8.0) {
+          _searchRadiusKm += 0.5;
+        }
+      });
+    });
+  }
+
+  Future<void> _fetchNearbyDriversForMap(double lat, double lng) async {
+    try {
+      final resp = await sl<ApiClient>().get('/rides/nearby?lat=$lat&lng=$lng&radius=5.0');
+      if (resp is Map<String, dynamic> && resp['riders'] is List) {
+        final List<dynamic> riders = resp['riders'] as List<dynamic>;
+        if (!mounted) return;
+        setState(() {
+          if (riders.isNotEmpty) {
+            _nearbyRidersCount = riders.length;
+          }
+          for (var i = 0; i < riders.length; i++) {
+            final r = riders[i] as Map<String, dynamic>;
+            final rLat = (r['latitude'] as num?)?.toDouble();
+            final rLng = (r['longitude'] as num?)?.toDouble();
+            final rId = r['rider_tracking_id']?.toString() ?? 'r_$i';
+            if (rLat != null && rLng != null) {
+              _mapMarkers['driver_$rId'] = MarkerData(
+                position: LatLng(rLat, rLng),
+                iconSize: 0.9,
+              );
+            }
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[NearbyDrivers] Error: $e');
+    }
+  }
+
+  Future<void> _bumpFare(double increaseAmount) async {
+    if (_activeRideTrackingId == null) return;
+    try {
+      final resp = await sl<ApiClient>().post('/rides/$_activeRideTrackingId/bump-fare', {
+        'increase_amount': increaseAmount,
+      });
+      final newFare = (resp is Map && resp['fare_amount'] is num)
+          ? (resp['fare_amount'] as num).toDouble()
+          : (_activeRideFare + increaseAmount);
+      setState(() {
+        _activeRideFare = newFare;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚡ Fare increased to PKR ${newFare.toStringAsFixed(0)}! Re-broadcasting to drivers...'),
+            backgroundColor: const Color(0xFFCAFF33),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to bump fare: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _acceptBid(Map<String, dynamic> bid) async {
+    if (_activeRideTrackingId == null) return;
+    final bidId = bid['bid_id'];
+    try {
+      await sl<ApiClient>().post('/rides/$_activeRideTrackingId/accept-bid', {
+        'bid_id': bidId,
+      });
+      _radarSearchTimer?.cancel();
+      setState(() {
+        _rideSearchStatus = 'accepted';
+        _acceptedRiderInfo = {
+          'tracking_id': _activeRideTrackingId,
+          'rider_tracking_id': bid['rider_tracking_id'],
+          'rider_name': bid['rider_name'],
+          'rider_phone': bid['rider_phone'],
+          'vehicle_type': bid['vehicle_type'],
+          'vehicle_plate': bid['vehicle_plate'],
+          'fare_amount': bid['bid_amount'],
+          'status': 'accepted',
+          'rating': bid['rating'] ?? '4.8 ★',
+        };
+        _liveBids.clear();
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to accept bid: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelRide() async {
+    if (_activeRideTrackingId != null) {
+      try {
+        await sl<ApiClient>().post('/rides/$_activeRideTrackingId/cancel', {
+          'actor_role': 'customer',
+        });
+      } catch (_) {}
+    }
+    _radarSearchTimer?.cancel();
+    setState(() {
+      _rideSearchStatus = 'idle';
+      _activeRideTrackingId = null;
+      _liveBids.clear();
+      _acceptedRiderInfo = null;
+      _rideRoutePolyline.clear();
+      _mapMarkers.removeWhere((k, _) => k.startsWith('driver_') || k == 'pickup' || k == 'dropoff');
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ride request cancelled.'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
         ),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle_rounded, color: Color(0xFFCAFF33), size: 28),
-            SizedBox(width: 12),
-            Text(
-              'Ride Confirmed',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Outfit'),
+      );
+    }
+  }
+
+  Widget _buildRideRadarPanel() {
+    if (_rideSearchStatus == 'accepted' && _acceptedRiderInfo != null) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141414),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFFCAFF33).withOpacity(0.4)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.6),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
-        content: Column(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Your ${vehicleType.toUpperCase()} has been requested.',
-              style: const TextStyle(color: Colors.white70, fontFamily: 'Outfit'),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCAFF33).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _acceptedRiderInfo!['status'] == 'in_progress' 
+                            ? Icons.navigation_rounded 
+                            : (_acceptedRiderInfo!['status'] == 'arrived' ? Icons.location_on_rounded : Icons.check_circle_rounded),
+                        color: const Color(0xFFCAFF33),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _acceptedRiderInfo!['status'] == 'in_progress'
+                            ? 'Ride in Progress • In Transit'
+                            : (_acceptedRiderInfo!['status'] == 'arrived'
+                                ? 'Captain Arrived at Pickup'
+                                : 'Driver Found & On The Way'),
+                        style: const TextStyle(
+                          color: Color(0xFFCAFF33),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          fontFamily: 'Outfit',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'PKR ${_acceptedRiderInfo!['fare_amount'] != null ? (_acceptedRiderInfo!['fare_amount'] as num).toStringAsFixed(0) : _activeRideFare.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                        color: Color(0xFFCAFF33),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 20,
+                        fontFamily: 'Outfit',
+                      ),
+                    ),
+                    Text(
+                      _activeRidePaymentMethod == 'wallet' ? '👛 Wallet' : '💵 Cash',
+                      style: const TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Estimated Fare: PKR ${fare.toStringAsFixed(0)}',
-              style: const TextStyle(color: Color(0xFFCAFF33), fontWeight: FontWeight.w900, fontSize: 16, fontFamily: 'Outfit'),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: Colors.white12,
+                  child: Icon(
+                    _activeRideVehicleType == 'bike' ? Icons.two_wheeler_rounded : Icons.directions_car_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _acceptedRiderInfo!['rider_name']?.toString() ?? 'Captain',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                          fontFamily: 'Outfit',
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.white10,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              _acceptedRiderInfo!['vehicle_plate']?.toString() ?? 'LHR-LIVE',
+                              style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _acceptedRiderInfo!['rating']?.toString() ?? '4.8 ★',
+                            style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                if ((_acceptedRiderInfo!['rider_phone']?.toString() ?? '').isNotEmpty)
+                  IconButton(
+                    onPressed: () {
+                      final phone = _acceptedRiderInfo!['rider_phone'].toString();
+                      unawaited(launchUrl(Uri.parse('tel:$phone')));
+                    },
+                    icon: const CircleAvatar(
+                      backgroundColor: Color(0xFFCAFF33),
+                      radius: 20,
+                      child: Icon(Icons.phone, color: Colors.black, size: 20),
+                    ),
+                  ),
+              ],
             ),
+            const SizedBox(height: 16),
+            if (_acceptedRiderInfo!['status'] != 'in_progress')
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: _cancelRide,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                    side: BorderSide(color: Colors.redAccent.withOpacity(0.5)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text('Cancel Ride', style: TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.bold)),
+                ),
+              ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Clear temporary route preview markers and polyline
-              setState(() {
-                _rideRoutePolyline.clear();
-                _mapMarkers.clear();
-                // Put back basic Lahore center pin
-                _mapMarkers['me'] = MarkerData(
-                  position: _mapCenter,
-                  iconSize: 1.0,
-                );
-              });
-            },
-            child: const Text(
-              'OK',
-              style: TextStyle(color: Color(0xFFCAFF33), fontWeight: FontWeight.bold, fontFamily: 'Outfit'),
+      );
+    }
+
+    // Searching / Offers Received Radar View
+    final minutes = _searchElapsedSeconds ~/ 60;
+    final seconds = _searchElapsedSeconds % 60;
+    final timeStr = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141414),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withOpacity(0.12)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.6),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Radar Header
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFCAFF33).withOpacity(0.15),
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Color(0xFFCAFF33),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Pinging Nearby Drivers...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        fontFamily: 'Outfit',
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Broadcasting to $_nearbyRidersCount drivers in ${_searchRadiusKm.toStringAsFixed(1)} km',
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                        fontFamily: 'Outfit',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  timeStr,
+                  style: const TextStyle(
+                    color: Color(0xFFCAFF33),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                    fontFamily: 'Outfit',
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          // Current Offer & Vehicle Banner
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _activeRideVehicleType == 'bike' ? Icons.two_wheeler_rounded : Icons.directions_car_rounded,
+                      color: const Color(0xFFCAFF33),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _activeRideVehicleType.toUpperCase(),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+                Text(
+                  'Your Fare: PKR ${_activeRideFare.toStringAsFixed(0)}',
+                  style: const TextStyle(
+                    color: Color(0xFFCAFF33),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    fontFamily: 'Outfit',
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Live Driver Counter Offers
+          if (_liveBids.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'Rider Offers (${_liveBids.length})',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                fontFamily: 'Outfit',
+              ),
+            ),
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 140),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _liveBids.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, idx) {
+                  final bid = _liveBids[idx];
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFCAFF33).withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: Colors.white12,
+                          child: Text(
+                            bid['rider_name'].toString().substring(0, 1),
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                bid['rider_name'].toString(),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              Text(
+                                '${bid['vehicle_plate']} • ${bid['rating']} • ${bid['eta']}',
+                                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          'PKR ${(bid['bid_amount'] as num).toStringAsFixed(0)}',
+                          style: const TextStyle(color: Color(0xFFCAFF33), fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () => _acceptBid(bid),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFCAFF33),
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            minimumSize: Size.zero,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: const Text('Accept', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 14),
+
+          // Fare Bump Buttons (inDrive / Bykea style)
+          Row(
+            children: [
+              const Text(
+                'Raise Fare:',
+                style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Outfit'),
+              ),
+              const SizedBox(width: 8),
+              _buildFareBumpChip(20),
+              const SizedBox(width: 6),
+              _buildFareBumpChip(50),
+              const SizedBox(width: 6),
+              _buildFareBumpChip(100),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Cancel Request Button
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: _cancelRide,
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.redAccent,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+              child: const Text('Cancel Request', style: TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Outfit')),
             ),
           ),
         ],
       ),
-    ),);
+    );
+  }
+
+  Widget _buildFareBumpChip(double amount) {
+    return InkWell(
+      onTap: () => _bumpFare(amount),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFCAFF33).withOpacity(0.4)),
+        ),
+        child: Text(
+          '+ PKR ${amount.toStringAsFixed(0)}',
+          style: const TextStyle(
+            color: Color(0xFFCAFF33),
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'Outfit',
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _fetchOrders() async {
@@ -874,7 +1831,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               deliveryOrder['id']?.toString() ?? '';
           if (orderId.isNotEmpty) {
             _activeDeliveryOrderId = orderId;
-            _fetchDeliveryRoute(orderId);
+            unawaited(_fetchDeliveryRoute(orderId));
           }
         } else {
           setState(() {
@@ -939,8 +1896,10 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       });
 
       if (_mapController != null) {
-        _mapController!.animateCamera(
-          CameraUpdate.newLatLng(points.first),
+        unawaited(
+          _mapController!.animateCamera(
+            CameraUpdate.newLatLng(points.first),
+          ),
         );
       }
     } catch (e) {
@@ -1599,46 +2558,57 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               ),
             ),
           ),
-        // Live rider tracking status banner
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: ValueListenableBuilder<Map<String, LatLng>>(
-                valueListenable: _riderMarkers,
-                builder: (context, riderCoords, _) {
-                  if (riderCoords.isEmpty) return const SizedBox.shrink();
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.85),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                    const Icon(Icons.radar_rounded,
-                        color: Color(0xFFCAFF33), size: 18,),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Live rider tracking: ${riderCoords.length} ${riderCoords.length == 1 ? "rider" : "riders"} on the move',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,),
+        // Live rider tracking status banner (shown when no active ride search)
+        if (_rideSearchStatus == 'idle')
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                child: ValueListenableBuilder<Map<String, LatLng>>(
+                  valueListenable: _riderMarkers,
+                  builder: (context, riderCoords, _) {
+                    if (riderCoords.isEmpty) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(16),
                       ),
-                    ),
-                  ],
+                      child: Row(
+                        children: [
+                          const Icon(Icons.radar_rounded,
+                              color: Color(0xFFCAFF33), size: 18,),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Live rider tracking: ${riderCoords.length} ${riderCoords.length == 1 ? "rider" : "riders"} on the move',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ),
           ),
-        ),
-      ),
-    ),
+        // Active ride radar and driver discovery panel
+        if (_rideSearchStatus != 'idle')
+          Positioned(
+            bottom: 12,
+            left: 16,
+            right: 16,
+            child: SafeArea(
+              child: _buildRideRadarPanel(),
+            ),
+          ),
         if (_isEstimatingRide)
           Positioned.fill(
             child: Container(

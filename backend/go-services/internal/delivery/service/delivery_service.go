@@ -402,24 +402,39 @@ func (s *DeliveryService) UpdateGigStatus(ctx context.Context, trackingID string
 		if req.PhotoURL == "" {
 			return nil, fmt.Errorf("delivery proof photo is required")
 		}
-		if req.OTPCode == "" {
-			return nil, fmt.Errorf("customer verification OTP is required")
+		// Multi-Factor Proof-of-Delivery:
+		// If customer phone battery died or SMS failed, allow Photo Proof of Delivery (PHOTO_POD)
+		if req.ProofOfDeliveryType == "photo_pod" || req.OTPCode == "PHOTO_POD" {
+			log.Printf("[DeliveryService] Delivery for gig %s verified via Photo POD fallback", trackingID)
+		} else {
+			if req.OTPCode == "" {
+				return nil, fmt.Errorf("customer verification OTP is required (or select photo_pod if customer phone is unavailable)")
+			}
+			if gig.OTPCode != req.OTPCode {
+				return nil, fmt.Errorf("invalid customer verification OTP")
+			}
 		}
-		if gig.OTPCode != req.OTPCode {
-			return nil, fmt.Errorf("invalid customer verification OTP")
+	} else if req.Status == models.StatusReturnedToVendor {
+		if req.PhotoURL == "" {
+			return nil, fmt.Errorf("doorstep photo proof is required when customer is unreachable to return to vendor")
 		}
 	}
 
 	var pickupPhoto, deliveryPhoto string
 	if req.Status == models.StatusPickedUp {
 		pickupPhoto = req.PhotoURL
-	} else if req.Status == models.StatusCompleted {
+	} else if req.Status == models.StatusCompleted || req.Status == models.StatusReturnedToVendor {
 		deliveryPhoto = req.PhotoURL
 	}
 
 	prevStatus, assignedRider, err := s.repo.UpdateGigStatus(ctx, trackingID, req.Status, pickupPhoto, deliveryPhoto, gig.RiderEarning)
 	if err != nil {
 		return nil, err
+	}
+
+	// If rider arrived at customer dropoff, record arrival time in Redis for 8-minute countdown SLA
+	if req.Status == models.StatusArrivedAtDropoff && s.redis != nil {
+		s.redis.Set(ctx, fmt.Sprintf("gig:arrived:%s", trackingID), time.Now().Unix(), 30*time.Minute)
 	}
 
 	// Reload gig to reflect status/photos changes
@@ -479,22 +494,34 @@ func (s *DeliveryService) UpdateGigStatus(ctx context.Context, trackingID string
 
 		if gig.IsCOD {
 			orderTotalPaisa := int64(math.Round(float64(gig.OrderTotal) * 100))
+			// Doorstep Partial Cash support: record cash actually collected by rider
+			cashCollectedPaisa := orderTotalPaisa
+			if req.CashCollectedPaisa > 0 && req.CashCollectedPaisa <= orderTotalPaisa {
+				cashCollectedPaisa = req.CashCollectedPaisa
+				log.Printf("[DeliveryService] Doorstep partial COD collected for gig %s: %d paisa of %d paisa",
+					gig.TrackingID, cashCollectedPaisa, orderTotalPaisa)
+			}
+
 			tx, txErr := s.repo.DB().Begin(ctx)
 			if txErr != nil {
 				log.Printf("CRITICAL: Failed to start COD transaction for gig %s: %v", gig.TrackingID, txErr)
 			} else {
 				defer tx.Rollback(ctx)
-				if _, err := tx.Exec(ctx, `UPDATE rider_wallet SET cash_in_hand_paisa = cash_in_hand_paisa + $2 WHERE rider_tracking_id = $1`, assignedRider, orderTotalPaisa); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE rider_wallet SET cash_in_hand_paisa = cash_in_hand_paisa + $2 WHERE rider_tracking_id = $1`, assignedRider, cashCollectedPaisa); err != nil {
 					log.Printf("CRITICAL: COD collection failed for rider %s: %v", assignedRider, err)
 					tx.Rollback(ctx)
-				} else if _, err := tx.Exec(ctx, `INSERT INTO cod_debts (order_tracking_id, rider_tracking_id, amount_paisa, status) VALUES ($1, $2, $3, 'pending')`, gig.OrderTrackingID, assignedRider, orderTotalPaisa); err != nil {
-					log.Printf("CRITICAL: COD debt recording failed for order %s: %v", gig.OrderTrackingID, err)
-					tx.Rollback(ctx)
-				} else if err := s.walletCredit.CreateCODDebtLedger(ctx, gig.OrderTrackingID, orderTotalPaisa); err != nil {
-					log.Printf("CRITICAL: COD debt ledger failed for order %s: %v", gig.OrderTrackingID, err)
-					tx.Rollback(ctx)
 				} else {
-					tx.Commit(ctx)
+					codDebtID := uuid.New()
+					cashCollectedRupees := float64(cashCollectedPaisa) / 100.0
+					if _, err := tx.Exec(ctx, `INSERT INTO cod_debts (id, order_tracking_id, rider_tracking_id, amount, amount_owed, amount_owed_paisa, status, created_at) VALUES ($1, $2, $3, $4, $4, $5, 'pending', NOW())`, codDebtID, gig.OrderTrackingID, assignedRider, cashCollectedRupees, cashCollectedPaisa); err != nil {
+						log.Printf("CRITICAL: COD debt recording failed for order %s: %v", gig.OrderTrackingID, err)
+						tx.Rollback(ctx)
+					} else if err := s.walletCredit.CreateCODDebtLedger(ctx, gig.OrderTrackingID, cashCollectedPaisa); err != nil {
+						log.Printf("CRITICAL: COD debt ledger failed for order %s: %v", gig.OrderTrackingID, err)
+						tx.Rollback(ctx)
+					} else {
+						tx.Commit(ctx)
+					}
 				}
 			}
 		}
@@ -1144,6 +1171,164 @@ func (s *DeliveryService) CancelGig(ctx context.Context, req *models.CancelGigRe
 	s.BroadcastGigAlert(ctx, gig, topRiders)
 
 	return nil
+}
+
+// EmergencyBreakdown handles mid-transit accidents or vehicle failure.
+// Generates a 4-digit Handover PIN, sets status to 'breakdown_pending_rescue',
+// and broadcasts a Rescue Gig searching around the rider's current breakdown GPS location.
+func (s *DeliveryService) EmergencyBreakdown(ctx context.Context, req *models.EmergencyBreakdownRequest) (*models.DeliveryGig, string, error) {
+	gig, err := s.repo.GetGigByTrackingID(ctx, req.TrackingID)
+	if err != nil {
+		return nil, "", fmt.Errorf("gig not found: %w", err)
+	}
+	if gig.AssignedRiderID != req.RiderTrackID {
+		return nil, "", fmt.Errorf("forbidden: only the assigned rider can declare an emergency breakdown")
+	}
+	if gig.Status != models.StatusPickedUp && gig.Status != models.StatusInTransit {
+		return nil, "", fmt.Errorf("conflict: emergency breakdown can only be reported after pickup (current status: %s)", gig.Status)
+	}
+
+	// Generate 4-digit handover PIN for physical custody transfer
+	handoverPIN := fmt.Sprintf("%04d", time.Now().UnixNano()%10000)
+
+	// Save PIN and breakdown location in Redis
+	if s.redis != nil {
+		s.redis.Set(ctx, fmt.Sprintf("gig:handover_pin:%s", req.TrackingID), handoverPIN, 2*time.Hour)
+		s.redis.Set(ctx, fmt.Sprintf("gig:breakdown_loc:%s", req.TrackingID), fmt.Sprintf("%.6f,%.6f", req.RiderLat, req.RiderLng), 2*time.Hour)
+	}
+
+	// Update gig status to breakdown_pending_rescue
+	_, _, err = s.repo.UpdateGigStatus(ctx, req.TrackingID, models.StatusBreakdownPending, "", "", 0)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to update gig status: %w", err)
+	}
+
+	// Re-broadcast rescue gig around Rider 1's live GPS breakdown coordinates
+	rescueLat := req.RiderLat
+	rescueLng := req.RiderLng
+	centerCoord := h3.GeoCoord{Latitude: rescueLat, Longitude: rescueLng}
+	breakdownHex := h3.FromGeo(centerCoord, 5)
+
+	var riders []string
+	var mu sync.Mutex
+
+	if s.redis != nil {
+		for k := 1; k <= 5; k++ {
+			neighbors := h3.KRing(breakdownHex, k)
+			radiusKm := float64(k * 5)
+			var wg sync.WaitGroup
+
+			for _, hex := range neighbors {
+				wg.Add(1)
+				go func(h h3.H3Index) {
+					defer wg.Done()
+					key := fmt.Sprintf("riders:locations:h3:%x", h)
+					res, err := s.redis.GeoRadius(ctx, key, rescueLng, rescueLat, &redis.GeoRadiusQuery{
+						Radius: radiusKm,
+						Unit:   "km",
+					}).Result()
+
+					if err == nil && len(res) > 0 {
+						mu.Lock()
+						for _, loc := range res {
+							if loc.Name != req.RiderTrackID {
+								found := false
+								for _, r := range riders {
+									if r == loc.Name {
+										found = true
+										break
+									}
+								}
+								if !found {
+									riders = append(riders, loc.Name)
+								}
+							}
+						}
+						mu.Unlock()
+					}
+				}(hex)
+			}
+			wg.Wait()
+
+			if len(riders) > 0 {
+				break
+			}
+		}
+	}
+
+	var topRiders []string
+	if len(riders) > 5 {
+		topRiders = riders[:5]
+	} else {
+		topRiders = riders
+	}
+
+	// Send rescue gig notification to nearby riders with pickup at breakdown coordinates
+	rescueGig := *gig
+	rescueGig.Status = models.StatusBreakdownPending
+	rescueGig.PickupLat = rescueLat
+	rescueGig.PickupLng = rescueLng
+	s.BroadcastGigAlert(ctx, &rescueGig, topRiders)
+
+	log.Printf("[DeliveryService] Emergency breakdown registered for gig %s: PIN=%s, breakdownCoords=(%.4f, %.4f), broadcasted to %d rescue riders",
+		req.TrackingID, handoverPIN, rescueLat, rescueLng, len(topRiders))
+
+	return &rescueGig, handoverPIN, nil
+}
+
+// AcceptRescueGig transfers custody of a stranded package to a rescue rider via 4-digit Handover PIN.
+func (s *DeliveryService) AcceptRescueGig(ctx context.Context, req *models.RescueAcceptRequest) (*models.DeliveryGig, error) {
+	gig, err := s.repo.GetGigByTrackingID(ctx, req.TrackingID)
+	if err != nil {
+		return nil, fmt.Errorf("gig not found: %w", err)
+	}
+	if gig.Status != models.StatusBreakdownPending {
+		return nil, fmt.Errorf("conflict: gig is not in breakdown_pending_rescue state (status: %s)", gig.Status)
+	}
+
+	// Verify Handover PIN
+	if s.redis != nil {
+		expectedPIN, err := s.redis.Get(ctx, fmt.Sprintf("gig:handover_pin:%s", req.TrackingID)).Result()
+		if err != nil || expectedPIN != req.HandoverPIN {
+			return nil, fmt.Errorf("unauthorized: invalid handover PIN from original rider")
+		}
+	}
+
+	// Re-assign rider to the rescue rider and move status back to in_transit
+	tx, err := s.repo.DB().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		UPDATE deliveries
+		SET rider_tracking_id = $1, status = $2, updated_at = NOW()
+		WHERE tracking_id = $3
+	`, req.RescueRiderID, models.StatusInTransit, req.TrackingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to assign rescue rider: %w", err)
+	}
+
+	// Also update parent order rider_tracking_id
+	_, _ = tx.Exec(ctx, `
+		UPDATE orders SET rider_tracking_id = $1, updated_at = NOW()
+		WHERE order_tracking_id = $2
+	`, req.RescueRiderID, gig.OrderTrackingID)
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	// Clean up Redis keys
+	if s.redis != nil {
+		s.redis.Del(ctx, fmt.Sprintf("gig:handover_pin:%s", req.TrackingID))
+		s.redis.Del(ctx, fmt.Sprintf("gig:breakdown_loc:%s", req.TrackingID))
+	}
+
+	updatedGig, _ := s.repo.GetGigByTrackingID(ctx, req.TrackingID)
+	log.Printf("[DeliveryService] Rescue gig %s successfully handed over to Rider %s", req.TrackingID, req.RescueRiderID)
+	return updatedGig, nil
 }
 
 // DisputeGig processes a customer complaint, compares photos, and suspends the rider if guilty

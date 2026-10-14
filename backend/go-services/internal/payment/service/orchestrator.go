@@ -118,6 +118,11 @@ func NewOrchestrator() *Orchestrator {
 		)
 	}
 
+	// Safepay - Pakistan card and multi-rail gateway
+	if safepaySecret := os.Getenv("SAFEPAY_SECRET_KEY"); safepaySecret != "" || os.Getenv("SAFEPAY_MERCHANT_SECRET") != "" || os.Getenv("SAFEPAY_API_KEY") != "" {
+		gateways["safepay"] = NewSafepayService(nil)
+	}
+
 	return &Orchestrator{
 		gateways: gateways,
 	}

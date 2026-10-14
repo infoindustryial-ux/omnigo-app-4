@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OMNIGO Super App — Real-Time Ride Bidding, Anti-Fraud Delivery & E-Commerce</title>
+  <meta name="description" content="OMNIGO is Pakistan's first Super App combining direct ride fare negotiation, Amazon-style verified courier with photo proof, and escrow-protected shopping.">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23CAFF33'><path d='M13 2L3 14h9l-1 8 10-12h-9l1-8z'/></svg>">
+
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS via CDN with Custom Config -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            omnigo: {
+              void: '#0F0F0F',
+              surface: '#141414',
+              slate: '#16161D',
+              lime: '#CAFF33',
+              mint: '#33FFA6',
+              cyan: '#33D1FF',
+              olive: '#1B2A10',
+            },
+            admin: {
+              navy: '#0F0F1A',
+              slate: '#1E1E2C',
+              violet: '#2A2A3D',
+              green: '#00E676',
+            },
+            fintech: {
+              start: '#303F9F',
+              end: '#1A237E',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            display: ['Outfit', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-omnigo-void text-gray-200 antialiased selection:bg-omnigo-lime selection:text-black">
+
+  <!-- Background Ambient Glow Accents -->
+  <div class="fixed top-0 left-1/4 w-[600px] h-[450px] bg-omnigo-olive/40 blur-[140px] pointer-events-none -z-10 rounded-full"></div>
+  <div class="fixed bottom-1/4 right-10 w-[500px] h-[500px] bg-omnigo-lime/5 blur-[160px] pointer-events-none -z-10 rounded-full"></div>
+
+  <!-- ======================================================== -->
+  <!-- 1. STICKY GLASSMORPHIC NAVBAR                            -->
+  <!-- ======================================================== -->
+  <header class="sticky top-4 z-50 px-4 sm:px-6 max-w-7xl mx-auto">
+    <nav class="glass-panel rounded-full px-5 py-3 flex items-center justify-between border border-white/10 shadow-2xl transition-all">
+      
+      <!-- Brand Logo -->
+      <a href="#" class="flex items-center gap-2.5 group">
+        <div class="w-10 h-10 rounded-full bg-omnigo-lime flex items-center justify-center text-black font-extrabold shadow-md group-hover:scale-105 transition-transform">
+          <i data-lucide="zap" class="w-5 h-5 fill-black stroke-black"></i>
+        </div>
+        <div class="flex flex-col">
+          <span class="font-display font-extrabold text-xl tracking-tight text-white flex items-center gap-1.5">
+            OMNIGO <span class="text-xs px-2 py-0.5 rounded-full bg-omnigo-lime/20 text-omnigo-lime border border-omnigo-lime/30 font-semibold tracking-normal">SUPER APP</span>
+          </span>
+        </div>
+      </a>
+
+      <!-- Desktop Nav Links -->
+      <div class="hidden lg:flex items-center gap-1 xl:gap-2 text-sm font-medium">
+        <a href="#about-app" class="px-3 py-2 text-omnigo-lime hover:text-white transition-colors font-semibold">About App</a>
+        <a href="#live-demo" class="px-3 py-2 text-gray-300 hover:text-white transition-colors rounded-full hover:bg-white/5">Ride Bidding</a>
+        <a href="#human-story" class="px-3 py-2 text-gray-300 hover:text-white transition-colors rounded-full hover:bg-white/5 flex items-center gap-1.5">
+          <span>Order Story Flow</span>
+          <span class="w-2 h-2 rounded-full bg-omnigo-lime animate-ping"></span>
+        </a>
+        <a href="#services" class="px-3 py-2 text-gray-300 hover:text-white transition-colors rounded-full hover:bg-white/5">Services</a>
+        <a href="#fintech" class="px-3 py-2 text-gray-300 hover:text-white transition-colors rounded-full hover:bg-white/5">Escrow Wallet</a>
+        <a href="#ai-safety" class="px-3 py-2 text-gray-300 hover:text-white transition-colors rounded-full hover:bg-white/5">Safety & AI</a>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="hidden sm:flex items-center gap-3">
+        <!-- Theme Toggle Button -->
+        <button id="theme-toggle-btn" class="p-2.5 rounded-full border border-white/10 hover:border-omnigo-lime/50 bg-white/5 hover:bg-white/10 text-gray-200 hover:text-white transition-all flex items-center justify-center group" title="Toggle Light / Dark Mode">
+          <i data-lucide="sun" id="theme-toggle-icon" class="w-4 h-4 text-omnigo-lime group-hover:rotate-45 transition-transform"></i>
+        </button>
+
+        <button class="trigger-apk-download inline-flex items-center gap-2 bg-omnigo-lime text-black font-display font-extrabold text-sm px-5 py-2.5 rounded-full hover:scale-105 transition-all shadow-[0_0_20px_rgba(202,255,51,0.35)] hover:shadow-[0_0_25px_rgba(202,255,51,0.6)]">
+          <i data-lucide="download" class="w-4 h-4 stroke-[2.5]"></i>
+          <span>Download APK</span>
+        </button>
+      </div>
+
+      <!-- Mobile Hamburger Button -->
+      <button id="mobile-menu-btn" class="lg:hidden p-2 text-gray-300 hover:text-white focus:outline-none">
+        <i data-lucide="menu" class="w-6 h-6"></i>
+      </button>
+    </nav>
+
+    <!-- Mobile Drawer -->
+    <div id="mobile-menu-drawer" class="hidden lg:hidden mt-2 p-5 glass-card rounded-3xl border border-white/10 flex flex-col gap-3 shadow-2xl">
+      <a href="#about-app" class="mobile-nav-link py-2 text-omnigo-lime font-bold">About OMNIGO App</a>
+      <a href="#live-demo" class="mobile-nav-link py-2 text-gray-200 hover:text-omnigo-lime font-medium">Ride Bidding & Map</a>
+      <a href="#human-story" class="mobile-nav-link py-2 text-gray-200 hover:text-omnigo-lime font-medium">Order Lifecycle & Anti-Fraud Flow</a>
+      <a href="#services" class="mobile-nav-link py-2 text-gray-200 hover:text-omnigo-lime font-medium">3-in-1 Ecosystem</a>
+      <a href="#fintech" class="mobile-nav-link py-2 text-gray-200 hover:text-omnigo-lime font-medium">Escrow Wallet</a>
+      <a href="#ai-safety" class="mobile-nav-link py-2 text-gray-200 hover:text-omnigo-lime font-medium">AI Safety System</a>
+      <div class="pt-3 border-t border-white/10 flex flex-col gap-2">
+        <button id="mobile-theme-toggle-btn" class="w-full py-2.5 px-4 rounded-full border border-white/10 bg-white/5 flex items-center justify-center gap-2 text-sm font-semibold text-gray-200 hover:text-white">
+          <i data-lucide="sun" class="w-4 h-4 text-omnigo-lime"></i>
+          <span id="mobile-theme-text">Toggle Theme Mode</span>
+        </button>
+        <button class="trigger-apk-download w-full bg-omnigo-lime text-black font-display font-extrabold py-3 rounded-full flex items-center justify-center gap-2">
+          <i data-lucide="download" class="w-4 h-4"></i> Download Android APK (118 MB)
+        </button>
+        <button id="close-mobile-menu" class="w-full text-center text-xs text-gray-400 py-2">Close Menu</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ======================================================== -->
+  <!-- 2. HERO SECTION WITH ILLUSTRATED PICK & DROP ANIMATION   -->
+  <!-- ======================================================== -->
+  <section class="pt-12 pb-20 px-4 sm:px-6 max-w-7xl mx-auto relative overflow-hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      
+      <!-- Left Column: Copy & Actions -->
+      <div class="lg:col-span-6 flex flex-col items-start">
+        
+        <!-- Status Pill -->
+        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-omnigo-lime/10 border border-omnigo-lime/30 text-omnigo-lime text-xs font-semibold uppercase tracking-wider mb-5 animate-pulse">
+          <span class="w-2 h-2 rounded-full bg-omnigo-lime animate-ping"></span>
+          <span>★ Real-Time Fare Negotiation & Multi-Service Super App</span>
+        </div>
+
+        <!-- Main Headline -->
+        <h1 class="font-display font-extrabold text-4xl sm:text-6xl xl:text-7xl leading-[1.06] tracking-tight text-white mb-5">
+          Bid Your Fare. <br/>
+          <span class="text-gradient-lime">Deliver Faster.</span> <br/>
+          Shop Smarter.
+        </h1>
+
+        <!-- Subheadline & App Summary -->
+        <p class="text-gray-300 text-base sm:text-lg font-normal leading-relaxed max-w-xl mb-4">
+          <strong class="text-white">OMNIGO</strong> is Pakistan's first Super App that eliminates unfair surge pricing. Agree directly on your ride fare with drivers, send instant parcel couriers with photo proof, and order from local verified stores with 100% bank-grade escrow security.
+        </p>
+
+        <!-- Feature Pills List -->
+        <div class="flex flex-wrap gap-2.5 mb-8 text-xs font-semibold">
+          <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300 flex items-center gap-1.5">
+            <i data-lucide="check" class="w-3.5 h-3.5 text-omnigo-lime"></i> Zero 3x Surge Pricing
+          </span>
+          <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300 flex items-center gap-1.5">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-omnigo-mint"></i> 100% Escrow Protection
+          </span>
+          <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300 flex items-center gap-1.5">
+            <i data-lucide="camera" class="w-3.5 h-3.5 text-omnigo-cyan"></i> Photo Proof Handover
+          </span>
+        </div>
+
+        <!-- CTA Buttons -->
+        <div class="flex flex-wrap items-center gap-4 w-full sm:w-auto mb-8">
+          <button class="trigger-apk-download w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-omnigo-lime text-black font-display font-extrabold text-base px-8 py-4 rounded-full shadow-[0_0_30px_rgba(202,255,51,0.4)] hover:shadow-[0_0_40px_rgba(202,255,51,0.7)] hover:scale-105 transition-all">
+            <i data-lucide="download-cloud" class="w-5 h-5 stroke-[2.5]"></i>
+            <span>Download Android APK</span>
+            <span class="text-xs bg-black/20 text-black px-2 py-0.5 rounded-full font-bold">v1.0 • 118MB</span>
+          </button>
+
+          <a href="#human-story" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white font-semibold text-base px-7 py-4 rounded-full hover:bg-white/10 hover:border-white/20 transition-all">
+            <i data-lucide="users" class="w-5 h-5 text-omnigo-lime"></i>
+            <span>Watch Animated Order Story</span>
+          </a>
+        </div>
+
+        <!-- Social Proof Stats -->
+        <div class="grid grid-cols-3 gap-6 pt-5 border-t border-white/10 w-full max-w-lg">
+          <div>
+            <div class="font-display font-bold text-2xl text-white">4.9 ★</div>
+            <div class="text-xs text-gray-400">Driver & User Rating</div>
+          </div>
+          <div>
+            <div class="font-display font-bold text-2xl text-omnigo-lime">50,000+</div>
+            <div class="text-xs text-gray-400">Completed Trips</div>
+          </div>
+          <div>
+            <div class="font-display font-bold text-2xl text-omnigo-mint">100%</div>
+            <div class="text-xs text-gray-400">Fraud Proof Escrow</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Illustrated Animated Pick & Drop Showcase Card -->
+      <div id="live-demo" class="lg:col-span-6 relative">
+        <div class="relative mx-auto max-w-lg">
+          
+          <!-- Outer Glow Ring -->
+          <div class="absolute -inset-1.5 bg-gradient-to-r from-omnigo-lime/40 via-omnigo-mint/25 to-omnigo-cyan/35 rounded-3xl blur-xl opacity-80 animate-pulse-glow"></div>
+
+          <!-- Glass Container -->
+          <div class="relative bg-omnigo-surface rounded-3xl border border-white/15 p-6 shadow-2xl">
+            
+            <!-- Card Header with Real Status -->
+            <div class="flex items-center justify-between pb-3.5 border-b border-white/10">
+              <div class="flex items-center gap-2.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-omnigo-lime animate-ping"></span>
+                <div>
+                  <h3 class="font-display font-bold text-white text-base flex items-center gap-2">
+                    <span>Live Ride Simulation</span>
+                    <span id="map-vehicle-pill" class="text-[11px] font-semibold text-omnigo-lime bg-omnigo-lime/10 px-2 py-0.5 rounded-md border border-omnigo-lime/20">Economy Car</span>
+                  </h3>
+                  <p class="text-xs text-gray-400">Gulberg III ➔ DHA Phase 5 (8.4 km)</p>
+                </div>
+              </div>
+              <span id="route-status-pill" class="text-[11px] px-2.5 py-1 rounded-full bg-omnigo-lime/15 text-omnigo-lime border border-omnigo-lime/30 font-semibold">
+                ● 4 Drivers Nearby
+              </span>
+            </div>
+
+            <!-- THE ILLUSTRATED ANIMATED PICK & DROP ROUTE MAP -->
+            <div class="my-4 rounded-2xl bg-[#0D0D12] relative overflow-hidden border border-white/15 p-3">
+              
+              <div class="absolute inset-0 opacity-25 bg-[radial-gradient(#CAFF33_1px,transparent_1px)] [background-size:20px_20px]"></div>
+              
+              <svg class="absolute inset-0 w-full h-full opacity-15 stroke-white/40" xmlns="http://www.w3.org/2000/svg">
+                <line x1="0" y1="40" x2="100%" y2="40" stroke-width="1" />
+                <line x1="0" y1="120" x2="100%" y2="120" stroke-width="1" />
+                <line x1="80" y1="0" x2="80" y2="100%" stroke-width="1" />
+                <line x1="280" y1="0" x2="280" y2="100%" stroke-width="1" />
+                <circle cx="110" cy="80" r="30" fill="none" stroke-width="1" stroke-dasharray="4 4" />
+              </svg>
+
+              <div class="relative z-10 w-full h-44 flex items-center justify-center">
+                <svg viewBox="0 0 400 160" class="w-full h-full overflow-visible">
+                  <defs>
+                    <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="#CAFF33" />
+                      <stop offset="50%" stop-color="#33FFA6" />
+                      <stop offset="100%" stop-color="#33D1FF" />
+                    </linearGradient>
+
+                    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="3" result="blur" />
+                      <feMerge>
+                        <feMergeNode in="blur" />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  </defs>
+
+                  <path d="M 35 110 C 110 30, 220 180, 365 70" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="8" stroke-linecap="round" />
+                  <path d="M 35 110 C 110 30, 220 180, 365 70" fill="none" stroke="url(#routeGradient)" stroke-width="4.5" stroke-linecap="round" class="route-dash-animate" filter="url(#neonGlow)" />
+
+                  <!-- Pickup Pin -->
+                  <g transform="translate(35, 110)">
+                    <circle cx="0" cy="0" r="18" fill="rgba(202, 255, 51, 0.2)" class="pin-glow-effect" />
+                    <circle cx="0" cy="0" r="10" fill="#CAFF33" />
+                    <circle cx="0" cy="0" r="4" fill="#000000" />
+                    <rect x="-35" y="16" width="70" height="20" rx="10" fill="rgba(18,18,18,0.9)" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                    <text x="0" y="29.5" fill="#FFFFFF" font-size="9" font-family="'Inter', sans-serif" font-weight="bold" text-anchor="middle">Pickup (A)</text>
+                  </g>
+
+                  <!-- Drop Pin -->
+                  <g transform="translate(365, 70)">
+                    <circle cx="0" cy="0" r="18" fill="rgba(51, 209, 255, 0.2)" class="pin-glow-effect" />
+                    <circle cx="0" cy="0" r="10" fill="#33D1FF" />
+                    <circle cx="0" cy="0" r="4" fill="#000000" />
+                    <rect x="-35" y="16" width="70" height="20" rx="10" fill="rgba(18,18,18,0.9)" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                    <text x="0" y="29.5" fill="#FFFFFF" font-size="9" font-family="'Inter', sans-serif" font-weight="bold" text-anchor="middle">Drop-off (B)</text>
+                  </g>
+
+                  <!-- Moving Dynamic Vehicle Node -->
+                  <g id="moving-vehicle-node" class="moving-car-node speed-medium">
+                    <g id="moving-vehicle-graphic">
+                      <!-- Dynamically rendered by app.js -->
+                    </g>
+                  </g>
+                </svg>
+              </div>
+
+              <!-- Map Overlay Floating Status Badges -->
+              <div class="flex items-center justify-between text-xs pt-2 border-t border-white/10 mt-1">
+                <div id="map-driver-badge" class="text-gray-300 font-medium">
+                  <strong>Driver Ahmad (Suzuki Alto)</strong> • 4.95 ★
+                </div>
+                <div class="flex items-center gap-1.5 text-omnigo-mint font-bold font-mono">
+                  <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                  <span id="map-eta-badge">15 Mins</span> (8.4 KM)
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Vehicle Fleet Selector -->
+            <div class="mb-4">
+              <span class="text-[11px] font-bold text-gray-400 uppercase tracking-wider block mb-2">Select Vehicle Type (Changes Map Animation):</span>
+              <div class="grid grid-cols-4 gap-2">
+                <button data-vehicle-select="bike" class="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:border-omnigo-lime/50 transition-all flex flex-col items-center group">
+                  <i data-lucide="bike" class="w-5 h-5 text-omnigo-lime mb-1 group-hover:scale-110 transition-transform"></i>
+                  <span class="text-[11px] font-bold text-white">Moto</span>
+                  <span class="text-[10px] text-gray-400">PKR 180</span>
+                </button>
+
+                <button data-vehicle-select="rickshaw" class="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:border-omnigo-mint/50 transition-all flex flex-col items-center group">
+                  <i data-lucide="truck" class="w-5 h-5 text-omnigo-mint mb-1 group-hover:scale-110 transition-transform"></i>
+                  <span class="text-[11px] font-bold text-white">Rickshaw</span>
+                  <span class="text-[10px] text-gray-400">PKR 290</span>
+                </button>
+
+                <button data-vehicle-select="mini" class="p-2.5 rounded-xl border border-omnigo-lime bg-omnigo-lime/10 transition-all flex flex-col items-center group scale-[1.02]">
+                  <i data-lucide="car" class="w-5 h-5 text-omnigo-lime mb-1 group-hover:scale-110 transition-transform"></i>
+                  <span class="text-[11px] font-bold text-white">Economy</span>
+                  <span class="text-[10px] text-omnigo-lime font-bold">PKR 450</span>
+                </button>
+
+                <button data-vehicle-select="ac" class="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:border-omnigo-cyan/50 transition-all flex flex-col items-center group">
+                  <i data-lucide="car-front" class="w-5 h-5 text-omnigo-cyan mb-1 group-hover:scale-110 transition-transform"></i>
+                  <span class="text-[11px] font-bold text-white">AC Ride</span>
+                  <span class="text-[10px] text-gray-400">PKR 650</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Fare Bidding Controls -->
+            <div class="bg-black/60 rounded-2xl p-4 border border-white/10 text-center mb-4">
+              <span class="text-xs uppercase tracking-wider text-gray-400 font-medium">Your Negotiated Offer</span>
+              
+              <div class="flex items-center justify-center gap-5 my-2">
+                <button id="bidding-decrease-btn" class="w-11 h-11 rounded-full bg-white/10 border border-white/20 hover:bg-white/20 text-white flex items-center justify-center transition-all hover:scale-105 active:scale-95 text-lg font-bold">
+                  −
+                </button>
+
+                <div id="bidding-fare-amount" class="font-display font-black text-3xl sm:text-4xl text-omnigo-lime tracking-tight transition-transform duration-200">
+                  PKR 450
+                </div>
+
+                <button id="bidding-increase-btn" class="w-11 h-11 rounded-full bg-white/10 border border-white/20 hover:bg-white/20 text-white flex items-center justify-center transition-all hover:scale-105 active:scale-95 text-lg font-bold">
+                  +
+                </button>
+              </div>
+
+              <div id="bidding-status-text" class="text-xs text-gray-400 transition-all">
+                Nearby drivers bidding for this Economy Car...
+              </div>
+            </div>
+
+            <button id="bidding-accept-btn" class="w-full bg-omnigo-lime hover:bg-[#bcf220] text-black font-display font-extrabold py-3.5 px-4 rounded-xl text-sm transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg flex items-center justify-center gap-2">
+              <i data-lucide="check-circle" class="w-4 h-4"></i>
+              <span>Offer PKR 450 for Economy Car</span>
+            </button>
+
+            <p class="text-[11px] text-center text-gray-500 mt-2.5">
+              Zero Surge Pricing • Direct Customer-to-Driver Agreement
+            </p>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 3. BRAND NEW: ANIMATED HUMAN STORY THEATER               -->
+  <!-- ======================================================== -->
+  <section id="human-story" class="py-24 px-4 sm:px-6 max-w-7xl mx-auto border-t border-white/10 relative">
+    
+    <div class="text-center max-w-3xl mx-auto mb-12">
+      <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-omnigo-lime/10 border border-omnigo-lime/30 text-omnigo-lime text-xs font-semibold uppercase tracking-wider mb-4">
+        🎬 Illustrated Order Journey
+      </div>
+      <h2 class="font-display font-extrabold text-3xl sm:text-5xl text-white tracking-tight mb-4">
+        The Anti-Fraud Story: From Phone to Doorstep
+      </h2>
+      <p class="text-gray-300 text-base sm:text-lg leading-relaxed">
+        Watch how Customer, Vendor, and Rider interact in real-time with photo inspection and OTP verification to eliminate online fraud.
+      </p>
+
+      <!-- Step Navigation Buttons -->
+      <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3 mt-8 max-w-2xl mx-auto">
+        <button data-story-step="0" class="px-3.5 py-1.5 rounded-full text-xs font-bold bg-omnigo-lime text-black shadow-lg">1. Customer Orders 📱</button>
+        <button data-story-step="1" class="px-3.5 py-1.5 rounded-full text-xs font-medium text-gray-400 bg-white/5 hover:bg-white/10">2. Vendor Packs 🏪</button>
+        <button data-story-step="2" class="px-3.5 py-1.5 rounded-full text-xs font-medium text-gray-400 bg-white/5 hover:bg-white/10">3. Photo Inspection 📸</button>
+        <button data-story-step="3" class="px-3.5 py-1.5 rounded-full text-xs font-medium text-gray-400 bg-white/5 hover:bg-white/10">4. Live GPS Transit 🛵</button>
+        <button data-story-step="4" class="px-3.5 py-1.5 rounded-full text-xs font-medium text-gray-400 bg-white/5 hover:bg-white/10">5. Doorstep OTP 🔑</button>
+        
+        <button id="play-story-btn" class="ml-2 px-4 py-1.5 rounded-full bg-omnigo-mint text-black font-extrabold text-xs flex items-center gap-1.5 shadow hover:scale-105 transition-transform">
+          <i data-lucide="play" class="w-3.5 h-3.5"></i>
+          <span>Play Story Flow</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- MAIN INTERACTIVE THEATER STAGE -->
+    <div class="glass-panel rounded-3xl p-6 sm:p-10 border border-white/15 max-w-5xl mx-auto shadow-2xl relative overflow-hidden">
+      
+      <!-- Ambient Backdrops -->
+      <div class="absolute -top-10 left-1/3 w-72 h-72 bg-omnigo-lime/10 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute -bottom-10 right-1/4 w-72 h-72 bg-omnigo-cyan/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <!-- ============================================== -->
+      <!-- TOP FLOATING SYSTEM MESSAGE / NOTIFICATION BAR -->
+      <!-- ============================================== -->
+      <div class="mb-8">
+        <div id="story-top-notification" class="notification-slide-in rounded-2xl p-4 bg-black/80 border border-omnigo-lime text-omnigo-lime shadow-2xl flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+              <i id="story-notif-icon" data-lucide="shopping-cart" class="w-5 h-5 text-omnigo-lime"></i>
+            </div>
+            <div>
+              <div class="text-[10px] text-gray-400 font-mono flex items-center gap-2">
+                <span id="story-notif-time">12:30 PM</span>
+                <span>• Live System Event Stream</span>
+              </div>
+              <div id="story-notif-text" class="text-sm font-bold text-white">
+                Ayesha placed Order #OMN-8429. PKR 2,850 securely locked in Escrow Vault.
+              </div>
+            </div>
+          </div>
+          <span class="text-[10px] bg-white/10 text-white px-2.5 py-1 rounded-full font-mono shrink-0 hidden sm:inline">
+            EVENT CONFIRMED
+          </span>
+        </div>
+      </div>
+
+      <!-- Story Current Title & Urdu Explanation -->
+      <div class="text-center mb-8">
+        <h3 id="story-heading" class="font-display font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
+          1. Customer Places Order & Funds Locked in Escrow
+        </h3>
+        <p id="story-urdu" class="text-sm font-semibold text-omnigo-lime mt-1">
+          کسٹمر اپنے موبائل سے آرڈر کرتا ہے اور رقم اسکرو والٹ میں لاک ہوتی ہے
+        </p>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- THE 3-ZONE ILLUSTRATED CHARACTER STAGE         -->
+      <!-- ============================================== -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch mb-8">
+        
+        <!-- ============================================ -->
+        <!-- ZONE 1: 👤 CUSTOMER WITH SMARTPHONE (LEFT)   -->
+        <!-- ============================================ -->
+        <div id="story-customer-card" class="rounded-3xl bg-black/50 border border-white/10 p-5 flex flex-col items-center text-center relative character-idle transition-all duration-300">
+          
+          <!-- Character Speech Bubble -->
+          <div class="mb-3 w-full bg-white/10 border border-white/15 rounded-2xl p-2.5 text-xs text-gray-200 relative min-h-[44px] flex items-center justify-center shadow-sm">
+            <span id="story-customer-bubble" class="font-medium">Ordered! 🔒 Money locked safely in Escrow.</span>
+            <!-- Bubble triangle pointer -->
+            <div class="w-3 h-3 bg-white/10 rotate-45 absolute -bottom-1.5 left-1/2 -translate-x-1/2 border-r border-b border-white/15"></div>
+          </div>
+
+          <!-- Illustrated Character Avatar (Human Customer) -->
+          <div class="relative w-full max-w-[210px] my-1 flex items-center justify-center">
+            <!-- Ambient ring -->
+            <div class="absolute inset-0 bg-omnigo-lime/10 rounded-full blur-xl pointer-events-none"></div>
+            
+            <!-- High-Fidelity Editorial Customer SVG -->
+            <svg viewBox="0 0 220 240" class="w-full h-auto max-h-[220px] mx-auto filter drop-shadow-md relative z-10" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="ayeshaSkin" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FFE0B2"/>
+                  <stop offset="100%" stop-color="#F5B886"/>
+                </linearGradient>
+                <linearGradient id="ayeshaSkinShadow" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#F5B886"/>
+                  <stop offset="100%" stop-color="#E2965A"/>
+                </linearGradient>
+                <linearGradient id="ayeshaHair" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#2D1A16"/>
+                  <stop offset="50%" stop-color="#1A0F0D"/>
+                  <stop offset="100%" stop-color="#120A08"/>
+                </linearGradient>
+                <linearGradient id="ayeshaHairHighlight" x1="0%" y1="0%" x2="100%" y2="50%">
+                  <stop offset="0%" stop-color="#5A3A31"/>
+                  <stop offset="100%" stop-color="#3A221C"/>
+                </linearGradient>
+                <linearGradient id="ayeshaHoodie" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#334155"/>
+                  <stop offset="100%" stop-color="#1E293B"/>
+                </linearGradient>
+                <linearGradient id="phoneBody" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#374151"/>
+                  <stop offset="50%" stop-color="#1F2937"/>
+                  <stop offset="100%" stop-color="#111827"/>
+                </linearGradient>
+                <linearGradient id="phoneGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#CAFF33" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#33FFA6" stop-opacity="0.1"/>
+                </linearGradient>
+              </defs>
+
+              <!-- Back Hair Volume -->
+              <path d="M65 95 C50 120 48 160 52 185 C62 180 75 165 78 140 C80 125 78 105 65 95 Z" fill="url(#ayeshaHair)" />
+              <path d="M155 95 C170 120 172 160 168 185 C158 180 145 165 142 140 C140 125 142 105 155 95 Z" fill="url(#ayeshaHair)" />
+
+              <!-- Torso & Trendy Hoodie Jacket -->
+              <g id="ayesha-body">
+                <path d="M52 185 C55 160 75 145 110 145 C145 145 165 160 168 185 L175 240 L45 240 Z" fill="url(#ayeshaHoodie)" />
+                <path d="M92 145 C98 158 122 158 128 145 L118 190 L102 190 Z" fill="#0F172A" />
+                <line x1="110" y1="155" x2="110" y2="240" stroke="#CAFF33" stroke-width="2" stroke-dasharray="4 2" opacity="0.8" />
+                <path d="M96 156 Q94 175 97 185" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" fill="none" />
+                <path d="M124 156 Q126 175 123 185" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" fill="none" />
+                <circle cx="97" cy="186" r="2" fill="#CAFF33" />
+                <circle cx="123" cy="186" r="2" fill="#CAFF33" />
+              </g>
+
+              <!-- Neck & Shadow -->
+              <path d="M98 125 L98 150 C104 154 116 154 122 150 L122 125 Z" fill="url(#ayeshaSkin)" />
+              <path d="M98 125 C104 135 116 135 122 125 C122 132 118 138 110 140 C102 138 98 132 98 125 Z" fill="url(#ayeshaSkinShadow)" opacity="0.4" />
+
+              <!-- Natural Head & Jawline -->
+              <path d="M78 85 C78 120 92 138 110 138 C128 138 142 120 142 85 C142 55 128 45 110 45 C92 45 78 55 78 85 Z" fill="url(#ayeshaSkin)" />
+
+              <!-- Ears & Gold Huggie Earrings -->
+              <path d="M76 86 C72 86 70 94 74 100 C76 103 78 102 78 96 Z" fill="url(#ayeshaSkin)" />
+              <circle cx="74" cy="99" r="2.5" fill="#F59E0B" stroke="#B45309" stroke-width="0.8" />
+              <path d="M144 86 C148 86 150 94 146 100 C144 103 142 102 142 96 Z" fill="url(#ayeshaSkin)" />
+              <circle cx="146" cy="99" r="2.5" fill="#F59E0B" stroke="#B45309" stroke-width="0.8" />
+
+              <!-- Facial Features -->
+              <g id="ayesha-face">
+                <path d="M88 78 Q96 74 102 77" stroke="#2D1A16" stroke-width="2.2" stroke-linecap="round" fill="none" />
+                <path d="M118 77 Q124 74 132 78" stroke="#2D1A16" stroke-width="2.2" stroke-linecap="round" fill="none" />
+                <!-- Left Eye -->
+                <path d="M88 84 Q95 80 102 85" stroke="#1A0F0D" stroke-width="2" fill="none" stroke-linecap="round" />
+                <ellipse cx="95" cy="86" rx="4.5" ry="5" fill="#2E1C14" />
+                <circle cx="96" cy="85" r="1.5" fill="#FFFFFF" />
+                <path d="M86 83 L84 81" stroke="#1A0F0D" stroke-width="1.2" stroke-linecap="round" />
+                <!-- Right Eye -->
+                <path d="M118 85 Q125 80 132 84" stroke="#1A0F0D" stroke-width="2" fill="none" stroke-linecap="round" />
+                <ellipse cx="125" cy="86" rx="4.5" ry="5" fill="#2E1C14" />
+                <circle cx="126" cy="85" r="1.5" fill="#FFFFFF" />
+                <path d="M134 83 L136 81" stroke="#1A0F0D" stroke-width="1.2" stroke-linecap="round" />
+                <!-- Blush -->
+                <circle cx="86" cy="98" r="7" fill="#F43F5E" fill-opacity="0.18" />
+                <circle cx="134" cy="98" r="7" fill="#F43F5E" fill-opacity="0.18" />
+                <!-- Nose -->
+                <path d="M108 86 Q111 96 113 97 Q109 99 106 98" stroke="#D97746" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                <!-- Warm Smiling Lips -->
+                <path d="M102 112 Q110 119 118 112" stroke="#E11D48" stroke-width="2.4" stroke-linecap="round" fill="none" />
+                <path d="M104 112 Q110 115 116 112" fill="#FFFFFF" opacity="0.9" />
+                <path d="M105 114 Q110 120 115 114" fill="#BE123C" opacity="0.4" />
+              </g>
+
+              <!-- Front Hair Strands -->
+              <g id="ayesha-hair-front">
+                <path d="M74 76 C72 45 92 32 110 32 C132 32 148 45 146 76 C142 55 130 44 110 44 C90 44 78 55 74 76 Z" fill="url(#ayeshaHairHighlight)" />
+                <path d="M74 72 C80 50 102 46 115 56 C105 58 92 68 85 86 C80 82 76 78 74 72 Z" fill="url(#ayeshaHair)" />
+                <path d="M146 72 C142 54 126 48 114 54 C122 60 134 68 138 90 C143 85 145 78 146 72 Z" fill="url(#ayeshaHair)" />
+                <path d="M75 85 C73 105 76 125 80 135 C77 122 74 105 75 85 Z" fill="url(#ayeshaHair)" />
+                <path d="M145 85 C147 105 144 125 140 135 C143 122 146 105 145 85 Z" fill="url(#ayeshaHair)" />
+              </g>
+
+              <!-- Holding iPhone 16 Pro in Foreground -->
+              <g id="ayesha-phone-hand" transform="translate(10, 0)">
+                <path d="M145 195 C140 170 130 160 122 165 L118 190 Z" fill="url(#ayeshaSkin)" />
+                <rect x="95" y="142" width="55" height="92" rx="10" fill="url(#phoneBody)" stroke="#94A3B8" stroke-width="1.8" />
+                <rect x="98" y="145" width="49" height="86" rx="8" fill="#09090B" />
+                <rect x="98" y="145" width="49" height="86" rx="8" fill="url(#phoneGlow)" />
+                <rect x="115" y="148" width="15" height="4" rx="2" fill="#000000" />
+                <!-- Mini OMNIGO App UI -->
+                <g transform="translate(101, 156)">
+                  <rect x="0" y="0" width="43" height="8" rx="2" fill="#CAFF33" />
+                  <text x="5" y="6" font-family="Inter, sans-serif" font-weight="900" font-size="5" fill="#000000">OMNIGO</text>
+                  <circle cx="38" cy="4" r="2" fill="#000000" />
+                  <rect x="0" y="12" width="43" height="26" rx="3" fill="#18181B" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" />
+                  <rect x="3" y="15" width="12" height="12" rx="2" fill="#27272A" />
+                  <circle cx="9" cy="21" r="4" fill="#CAFF33" opacity="0.7" />
+                  <text x="18" y="19" font-family="Inter, sans-serif" font-weight="700" font-size="4" fill="#FFFFFF">Audio Pro</text>
+                  <text x="18" y="25" font-family="Inter, sans-serif" font-weight="900" font-size="5" fill="#CAFF33">PKR 2,850</text>
+                  <rect x="0" y="42" width="43" height="11" rx="3" fill="#15803D" />
+                  <text x="6" y="50" font-family="Inter, sans-serif" font-weight="800" font-size="4.5" fill="#FFFFFF">🔒 Escrow Active</text>
+                </g>
+                <!-- Hand & Fingers -->
+                <g id="hand-fingers">
+                  <path d="M92 182 C92 176 96 172 104 175 C108 177 108 184 104 187 C97 190 92 188 92 182 Z" fill="url(#ayeshaSkin)" stroke="#D97746" stroke-width="0.8" />
+                  <rect x="146" y="162" width="9" height="6" rx="3" fill="url(#ayeshaSkin)" stroke="#D97746" stroke-width="0.6" />
+                  <rect x="147" y="171" width="9" height="6" rx="3" fill="url(#ayeshaSkin)" stroke="#D97746" stroke-width="0.6" />
+                  <rect x="146" y="180" width="8" height="6" rx="3" fill="url(#ayeshaSkin)" stroke="#D97746" stroke-width="0.6" />
+                </g>
+              </g>
+            </svg>
+          </div>
+
+          <div class="font-display font-bold text-white text-base mt-2">Ayesha (Customer)</div>
+          <div class="text-[11px] text-gray-400">Ordering from Home • DHA Phase 5</div>
+
+          <!-- Micro Phone Screen Simulator -->
+          <div class="mt-3 w-full bg-black/80 rounded-xl border border-white/15 p-2">
+            <div id="story-customer-phone">
+              <div class="p-2 text-center">
+                <div class="text-[9px] text-gray-400">OMNIGO Checkout</div>
+                <div class="text-[12px] font-black text-omnigo-lime mt-0.5">PKR 2,850</div>
+                <div class="text-[8px] bg-emerald-500/20 text-emerald-400 rounded py-0.5 mt-1 font-bold">🔒 Escrow Active</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ============================================ -->
+        <!-- ZONE 2: 🛵 VERIFIED COURIER RIDER (CENTER)   -->
+        <!-- ============================================ -->
+        <div id="story-rider-card" class="rounded-3xl bg-black/50 border border-white/10 p-5 flex flex-col items-center text-center relative character-idle transition-all duration-300">
+          
+          <!-- Rider Speech Bubble -->
+          <div class="mb-3 w-full bg-white/10 border border-white/15 rounded-2xl p-2.5 text-xs text-gray-200 relative min-h-[44px] flex items-center justify-center shadow-sm">
+            <span id="story-rider-bubble" class="font-medium">Online in Gulberg area.</span>
+            <div class="w-3 h-3 bg-white/10 rotate-45 absolute -bottom-1.5 left-1/2 -translate-x-1/2 border-r border-b border-white/15"></div>
+          </div>
+
+          <!-- Illustrated Character Avatar (Courier Rider Farhan) -->
+          <div class="relative w-full max-w-[210px] my-1 flex items-center justify-center">
+            <div class="absolute inset-0 bg-omnigo-mint/10 rounded-full blur-xl pointer-events-none"></div>
+
+            <!-- High-Fidelity Editorial Rider SVG -->
+            <svg viewBox="0 0 220 240" class="w-full h-auto max-h-[220px] mx-auto filter drop-shadow-md relative z-10" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="helmetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#334155"/>
+                  <stop offset="60%" stop-color="#1E293B"/>
+                  <stop offset="100%" stop-color="#0F172A"/>
+                </linearGradient>
+                <linearGradient id="visorGrad" x1="0%" y1="0%" x2="100%" y2="50%">
+                  <stop offset="0%" stop-color="#0F172A"/>
+                  <stop offset="40%" stop-color="#1E293B"/>
+                  <stop offset="50%" stop-color="#CAFF33" stop-opacity="0.8"/>
+                  <stop offset="65%" stop-color="#33FFA6" stop-opacity="0.6"/>
+                  <stop offset="100%" stop-color="#090D16"/>
+                </linearGradient>
+                <linearGradient id="riderJacket" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#1E293B"/>
+                  <stop offset="100%" stop-color="#0F172A"/>
+                </linearGradient>
+                <radialGradient id="cameraFlashGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.9"/>
+                  <stop offset="50%" stop-color="#CAFF33" stop-opacity="0.5"/>
+                  <stop offset="100%" stop-color="#CAFF33" stop-opacity="0"/>
+                </radialGradient>
+              </defs>
+
+              <!-- Delivery Backpack Straps in Background -->
+              <path d="M48 145 C42 165 40 210 42 240 L58 240 L56 160 Z" fill="#047857" opacity="0.7" />
+              <path d="M172 145 C178 165 180 210 178 240 L162 240 L164 160 Z" fill="#047857" opacity="0.7" />
+
+              <!-- Body & Technical High-Vis Biker Jacket -->
+              <g id="rider-body">
+                <path d="M52 175 C56 150 78 138 110 138 C142 138 164 150 168 175 L176 240 L44 240 Z" fill="url(#riderJacket)" />
+                <path d="M58 175 L110 195 L162 175 L160 162 L110 180 L60 162 Z" fill="#CAFF33" />
+                <path d="M64 190 L110 208 L156 190 L154 182 L110 198 L66 182 Z" fill="#33FFA6" />
+                <line x1="110" y1="138" x2="110" y2="240" stroke="#000000" stroke-width="3" />
+                <rect x="65" y="210" width="28" height="14" rx="2" fill="#000000" stroke="#CAFF33" stroke-width="1" />
+                <text x="69" y="220" font-family="Inter, sans-serif" font-weight="900" font-size="6" fill="#CAFF33">RIDER</text>
+              </g>
+
+              <!-- Neck Guard -->
+              <path d="M96 122 L96 142 C104 146 116 146 124 142 L124 122 Z" fill="#1E293B" />
+
+              <!-- Sleek Aerodynamic Helmet -->
+              <g id="rider-helmet">
+                <path d="M68 85 C68 45 88 30 110 30 C132 30 152 45 152 85 C152 122 136 130 110 130 C84 130 68 122 68 85 Z" fill="url(#helmetGrad)" stroke="#475569" stroke-width="2" />
+                <path d="M98 32 C104 28 116 28 122 32 L118 42 L102 42 Z" fill="#CAFF33" />
+                <path d="M74 68 C74 62 84 55 110 55 C136 55 146 62 146 68 C146 95 138 106 110 106 C82 106 74 95 74 68 Z" fill="url(#visorGrad)" stroke="#1E293B" stroke-width="1.5" />
+                <path d="M84 72 L136 62" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" opacity="0.7" />
+                <path d="M88 80 L120 74" stroke="#CAFF33" stroke-width="1.5" stroke-linecap="round" opacity="0.8" />
+                <path d="M92 110 L128 110 L124 124 L96 124 Z" fill="#0F172A" />
+                <circle cx="104" cy="117" r="1.5" fill="#475569" />
+                <circle cx="110" cy="117" r="1.5" fill="#475569" />
+                <circle cx="116" cy="117" r="1.5" fill="#475569" />
+              </g>
+
+              <!-- Anti-Fraud Phone Camera Hand Action -->
+              <g id="rider-camera-inspection" transform="translate(0, 15)">
+                <path d="M72 195 C75 178 88 170 98 175 L94 195 Z" fill="#1E293B" stroke="#CAFF33" stroke-width="1" />
+                <path d="M148 195 C145 178 132 170 122 175 L126 195 Z" fill="#1E293B" stroke="#CAFF33" stroke-width="1" />
+                <rect x="88" y="152" width="44" height="66" rx="8" fill="#18181B" stroke="#CAFF33" stroke-width="1.5" />
+                <rect x="92" y="156" width="22" height="22" rx="5" fill="#000000" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" />
+                <circle cx="98" cy="162" r="3.5" fill="#1E293B" stroke="#33FFA6" stroke-width="1" />
+                <circle cx="98" cy="172" r="3.5" fill="#1E293B" stroke="#33FFA6" stroke-width="1" />
+                <circle cx="108" cy="167" r="3" fill="#1E293B" stroke="#CAFF33" stroke-width="1" />
+                <circle cx="108" cy="160" r="8" fill="url(#cameraFlashGlow)" class="animate-ping" />
+                <circle cx="108" cy="160" r="2.5" fill="#FFFFFF" />
+
+                <!-- Holographic Viewfinder Overlay Reticle -->
+                <g transform="translate(110, 185)">
+                  <rect x="-35" y="-62" width="70" height="14" rx="3" fill="#000000" fill-opacity="0.8" stroke="#CAFF33" stroke-width="1" />
+                  <text x="0" y="-53" font-family="Inter, sans-serif" font-weight="800" font-size="5" fill="#CAFF33" text-anchor="middle">📸 AI PROOF AUDIT</text>
+                  <path d="M-25 -42 L-32 -42 L-32 -35" stroke="#33FFA6" stroke-width="1.8" fill="none" />
+                  <path d="M25 -42 L32 -42 L32 -35" stroke="#33FFA6" stroke-width="1.8" fill="none" />
+                  <path d="M-25 15 L-32 15 L-32 8" stroke="#33FFA6" stroke-width="1.8" fill="none" />
+                  <path d="M25 15 L32 15 L32 8" stroke="#33FFA6" stroke-width="1.8" fill="none" />
+                  <line x1="-5" y1="-12" x2="5" y2="-12" stroke="#CAFF33" stroke-width="1.5" />
+                  <line x1="0" y1="-17" x2="0" y2="-7" stroke="#CAFF33" stroke-width="1.5" />
+                  <circle cx="0" cy="-12" r="10" stroke="#CAFF33" stroke-width="0.8" stroke-dasharray="2 2" fill="none" />
+                </g>
+              </g>
+            </svg>
+          </div>
+
+          <div class="font-display font-bold text-white text-base mt-2">Rider Farhan</div>
+          <div class="text-[11px] text-omnigo-mint font-semibold">Verified Courier • Honda CG 125</div>
+
+          <!-- Micro Rider Telemetry Screen -->
+          <div class="mt-3 w-full bg-black/80 rounded-xl border border-white/15 p-2">
+            <div id="story-rider-phone">
+              <div class="p-2 text-center">
+                <div class="text-[9px] text-omnigo-mint font-bold flex items-center justify-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-omnigo-mint animate-ping"></span>
+                  <span>ANTI-FRAUD AI CAMERA</span>
+                </div>
+                <div class="text-[11px] text-white font-bold mt-0.5">Ready for Photo Proof</div>
+                <div class="text-[8px] text-gray-400 mt-0.5">GPS: 31.5204° N, 74.3587° E</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ============================================ -->
+        <!-- ZONE 3: 🏪 VENDOR SHOPKEEPER & COUNTER       -->
+        <!-- ============================================ -->
+        <div id="story-vendor-card" class="rounded-3xl bg-black/50 border border-white/10 p-5 flex flex-col items-center text-center relative character-idle transition-all duration-300">
+          
+          <!-- Vendor Speech Bubble -->
+          <div class="mb-3 w-full bg-white/10 border border-white/15 rounded-2xl p-2.5 text-xs text-gray-200 relative min-h-[44px] flex items-center justify-center shadow-sm">
+            <span id="story-vendor-bubble" class="font-medium">Waiting for orders...</span>
+            <div class="w-3 h-3 bg-white/10 rotate-45 absolute -bottom-1.5 left-1/2 -translate-x-1/2 border-r border-b border-white/15"></div>
+          </div>
+
+          <!-- Illustrated Character Avatar (Human Merchant) -->
+          <div class="relative w-full max-w-[210px] my-1 flex items-center justify-center">
+            <div class="absolute inset-0 bg-omnigo-cyan/10 rounded-full blur-xl pointer-events-none"></div>
+
+            <!-- High-Fidelity Editorial Merchant SVG -->
+            <svg viewBox="0 0 220 240" class="w-full h-auto max-h-[220px] mx-auto filter drop-shadow-md relative z-10" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="tariqSkinWarm" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FDE68A"/>
+                  <stop offset="100%" stop-color="#F59E0B"/>
+                </linearGradient>
+                <linearGradient id="tariqHair" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#292524"/>
+                  <stop offset="100%" stop-color="#1C1917"/>
+                </linearGradient>
+                <linearGradient id="counterDesk" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#334155"/>
+                  <stop offset="50%" stop-color="#1E293B"/>
+                  <stop offset="100%" stop-color="#0F172A"/>
+                </linearGradient>
+                <linearGradient id="kraftBox" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#D97706"/>
+                  <stop offset="100%" stop-color="#B45309"/>
+                </linearGradient>
+                <linearGradient id="securityTape" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#CAFF33"/>
+                  <stop offset="100%" stop-color="#33FFA6"/>
+                </linearGradient>
+              </defs>
+
+              <!-- Shelving Background -->
+              <rect x="25" y="45" width="170" height="8" rx="2" fill="#334155" opacity="0.3" />
+              <rect x="40" y="28" width="14" height="17" rx="1" fill="#475569" opacity="0.4" />
+              <rect x="60" y="24" width="22" height="21" rx="1" fill="#475569" opacity="0.4" />
+              <rect x="145" y="26" width="18" height="19" rx="1" fill="#475569" opacity="0.4" />
+
+              <!-- Torso & Collared Merchant Apron -->
+              <g id="tariq-body">
+                <path d="M56 160 C58 140 76 130 110 130 C144 130 162 140 164 160 L168 185 L52 185 Z" fill="#1E293B" />
+                <path d="M72 142 L148 142 L152 185 L68 185 Z" fill="#0284C7" />
+                <path d="M85 142 L100 128 L120 128 L135 142" stroke="#0369A1" stroke-width="3" fill="none" />
+                <path d="M96 128 L110 138 L104 146 Z" fill="#FFFFFF" />
+                <path d="M124 128 L110 138 L116 146 Z" fill="#FFFFFF" />
+                <!-- Lanyard Badge -->
+                <path d="M102 135 L106 156 L114 156 L118 135" stroke="#CAFF33" stroke-width="1.8" fill="none" />
+                <rect x="102" y="156" width="16" height="22" rx="2" fill="#FFFFFF" stroke="#000000" stroke-width="0.8" />
+                <circle cx="110" cy="162" r="3" fill="#0284C7" />
+                <rect x="105" y="168" width="10" height="2" fill="#CAFF33" />
+                <rect x="105" y="172" width="10" height="1.5" fill="#64748B" />
+              </g>
+
+              <!-- Neck -->
+              <path d="M98 112 L98 132 C104 136 116 136 122 132 L122 112 Z" fill="url(#tariqSkinWarm)" />
+
+              <!-- Head & Beard -->
+              <g id="tariq-head">
+                <path d="M80 75 C80 112 94 126 110 126 C126 126 140 112 140 75 C140 50 126 40 110 40 C94 40 80 50 80 75 Z" fill="url(#tariqSkinWarm)" />
+                <path d="M78 76 C74 76 72 84 76 90 C78 92 80 90 80 84 Z" fill="url(#tariqSkinWarm)" />
+                <path d="M142 76 C146 76 148 84 144 90 C142 92 140 90 140 84 Z" fill="url(#tariqSkinWarm)" />
+                <path d="M82 82 C82 112 94 124 110 124 C126 124 138 112 138 82 C134 85 130 92 130 96 C130 112 122 118 110 118 C98 118 90 112 90 96 C90 92 86 85 82 82 Z" fill="#292524" opacity="0.85" />
+                <path d="M88 68 Q95 64 102 67" stroke="#1C1917" stroke-width="2.6" stroke-linecap="round" fill="none" />
+                <path d="M118 67 Q125 64 132 68" stroke="#1C1917" stroke-width="2.6" stroke-linecap="round" fill="none" />
+                <path d="M89 74 Q96 70 102 75" stroke="#1C1917" stroke-width="2" fill="none" stroke-linecap="round" />
+                <circle cx="96" cy="76" r="3.5" fill="#1C1917" />
+                <circle cx="97" cy="75" r="1.2" fill="#FFFFFF" />
+                <path d="M118 75 Q124 70 131 74" stroke="#1C1917" stroke-width="2" fill="none" stroke-linecap="round" />
+                <circle cx="124" cy="76" r="3.5" fill="#1C1917" />
+                <circle cx="125" cy="75" r="1.2" fill="#FFFFFF" />
+                <path d="M107 75 Q111 86 113 87 Q109 89 105 88" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                <path d="M100 102 Q110 112 120 102" stroke="#1C1917" stroke-width="2.4" stroke-linecap="round" fill="none" />
+                <path d="M102 102 Q110 107 118 102" fill="#FFFFFF" />
+                <!-- Hair -->
+                <path d="M78 68 C76 42 92 30 110 30 C128 30 144 42 142 68 C138 48 126 38 110 38 C94 38 82 48 78 68 Z" fill="url(#tariqHair)" />
+                <path d="M78 68 C80 52 92 42 104 42 C92 46 84 56 82 72 Z" fill="#44403C" />
+                <path d="M142 68 C140 52 128 42 116 42 C128 46 136 56 138 72 Z" fill="#44403C" />
+              </g>
+
+              <!-- STORE COUNTER DESK IN FOREGROUND -->
+              <g id="tariq-counter">
+                <path d="M10 180 L210 180 L220 240 L0 240 Z" fill="url(#counterDesk)" stroke="#475569" stroke-width="1.5" />
+                <line x1="10" y1="181" x2="210" y2="181" stroke="#33D1FF" stroke-width="2" opacity="0.7" />
+
+                <!-- Angled POS Tablet -->
+                <g transform="translate(25, 170)">
+                  <polygon points="18,30 32,30 28,15 22,15" fill="#64748B" />
+                  <rect x="4" y="0" width="42" height="30" rx="3" fill="#09090B" stroke="#33D1FF" stroke-width="1.2" transform="rotate(-6 25 15)" />
+                  <g transform="rotate(-6 25 15)">
+                    <rect x="6" y="2" width="38" height="6" rx="1" fill="#0284C7" />
+                    <text x="9" y="7" font-family="Inter, sans-serif" font-weight="900" font-size="3.5" fill="#FFFFFF">OMNIGO POS</text>
+                    <circle cx="40" cy="5" r="1.5" fill="#CAFF33" />
+                    <text x="8" y="14" font-family="Inter, sans-serif" font-weight="800" font-size="3.5" fill="#33FFA6">NEW ORDER</text>
+                    <text x="8" y="20" font-family="Inter, sans-serif" font-weight="900" font-size="4.5" fill="#FFFFFF">#OG-8429</text>
+                    <rect x="8" y="23" width="22" height="4" rx="1" fill="#CAFF33" />
+                    <text x="10" y="26.5" font-family="Inter, sans-serif" font-weight="900" font-size="3" fill="#000000">✓ PACKED</text>
+                  </g>
+                </g>
+
+                <!-- Kraft Cardboard Parcel Box with Tamper Tape -->
+                <g transform="translate(130, 160)">
+                  <rect x="10" y="20" width="45" height="35" rx="2" fill="url(#kraftBox)" stroke="#78350F" stroke-width="1" />
+                  <polygon points="10,20 22,8 67,8 55,20" fill="#F59E0B" stroke="#78350F" stroke-width="1" />
+                  <polygon points="55,20 67,8 67,43 55,55" fill="#92400E" stroke="#78350F" stroke-width="1" />
+                  <polygon points="32,8 39,8 39,45 32,45" fill="url(#securityTape)" stroke="#000000" stroke-width="0.6" />
+                  <line x1="33" y1="12" x2="38" y2="15" stroke="#000000" stroke-width="1.2" />
+                  <line x1="33" y1="20" x2="38" y2="23" stroke="#000000" stroke-width="1.2" />
+                  <line x1="33" y1="28" x2="38" y2="31" stroke="#000000" stroke-width="1.2" />
+                  <line x1="33" y1="36" x2="38" y2="39" stroke="#000000" stroke-width="1.2" />
+                  <rect x="14" y="26" width="14" height="18" rx="1" fill="#FFFFFF" />
+                  <line x1="16" y1="30" x2="26" y2="30" stroke="#000000" stroke-width="1" stroke-dasharray="1 1" />
+                  <line x1="16" y1="33" x2="26" y2="33" stroke="#000000" stroke-width="1.2" stroke-dasharray="1.5 0.8" />
+                  <text x="16" y="42" font-family="Inter, sans-serif" font-weight="900" font-size="3" fill="#DC2626">FRAGILE</text>
+                </g>
+
+                <!-- Hands on Counter -->
+                <ellipse cx="80" cy="190" rx="9" ry="6" fill="url(#tariqSkinWarm)" stroke="#D97706" stroke-width="0.8" />
+                <ellipse cx="125" cy="190" rx="9" ry="6" fill="url(#tariqSkinWarm)" stroke="#D97706" stroke-width="0.8" />
+              </g>
+            </svg>
+          </div>
+
+          <div class="font-display font-bold text-white text-base mt-2">Gulberg Tech Mart</div>
+          <div class="text-[11px] text-gray-400">Verified Merchant • 98% Rating</div>
+
+          <!-- Micro Vendor Tablet Screen -->
+          <div class="mt-3 w-full bg-black/80 rounded-xl border border-white/15 p-2">
+            <div id="story-vendor-phone">
+              <div class="p-2 text-center text-gray-400 text-[9px]">
+                Store Open • Online
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- ============================================== -->
+      <!-- CENTRAL PROCESS HUD & CRYPTOGRAPHIC LEDGER     -->
+      <!-- ============================================== -->
+      <div id="story-center-stage" class="w-full bg-white/5 rounded-3xl border border-white/10 p-6 min-h-[140px] flex items-center justify-center shadow-xl mb-8">
+        <!-- Dynamically rendered by app.js -->
+      </div>
+
+      <!-- Bottom Feature Safeguards -->
+      <div class="mt-8 pt-6 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs">
+        <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
+          <div class="text-omnigo-lime font-bold">1. Escrow Lock</div>
+          <div class="text-[11px] text-gray-400 mt-0.5">No advance buyer scam</div>
+        </div>
+        <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
+          <div class="text-omnigo-cyan font-bold">2. Tamper Tape</div>
+          <div class="text-[11px] text-gray-400 mt-0.5">Sealed at store</div>
+        </div>
+        <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
+          <div class="text-amber-300 font-bold">3. Photo Inspection</div>
+          <div class="text-[11px] text-gray-400 mt-0.5">Rider audits contents</div>
+        </div>
+        <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
+          <div class="text-emerald-400 font-bold">4. 4-Digit OTP</div>
+          <div class="text-[11px] text-gray-400 mt-0.5">Money releases on verified box</div>
+        </div>
+      </div>
+
+    </div>
+
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 4. WHAT IS OMNIGO? (APP PURPOSE & PROBLEM SOLVED)        -->
+  <!-- ======================================================== -->
+  <section id="about-app" class="py-20 px-4 sm:px-6 max-w-7xl mx-auto border-t border-white/10">
+    <div class="max-w-3xl mx-auto text-center mb-16">
+      <div class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-omnigo-lime/10 border border-omnigo-lime/30 text-omnigo-lime text-xs font-semibold uppercase tracking-wider mb-3">
+        💡 App Identity & Mission
+      </div>
+      <h2 class="font-display font-extrabold text-3xl sm:text-5xl text-white tracking-tight mb-4">
+        What is OMNIGO & Why Was It Built?
+      </h2>
+      <p class="text-gray-300 text-base sm:text-lg leading-relaxed">
+        Existing apps force customers to pay 300% surge prices during rains and rush hours, take 30% cuts from hardworking drivers, and fail to prevent online delivery fraud. <strong class="text-omnigo-lime">OMNIGO was built to fix this broken system once and for all.</strong>
+      </p>
+    </div>
+
+    <!-- 4 Problem vs Solution Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      
+      <div class="glass-panel rounded-3xl p-6 border border-white/10 hover:border-omnigo-lime/40 transition-all flex flex-col justify-between">
+        <div>
+          <div class="w-12 h-12 rounded-2xl bg-omnigo-lime/15 text-omnigo-lime flex items-center justify-center mb-4">
+            <i data-lucide="dollar-sign" class="w-6 h-6"></i>
+          </div>
+          <span class="text-[11px] font-bold text-omnigo-lime uppercase tracking-wider">No Hidden Traps</span>
+          <h3 class="font-display font-bold text-xl text-white mt-1 mb-2">Zero 3x Surge Pricing</h3>
+          <p class="text-gray-400 text-xs sm:text-sm leading-relaxed">
+            Other apps raise fares without warning. In OMNIGO, you set your own price or choose a driver's counter-offer. You are always in control.
+          </p>
+        </div>
+        <div class="pt-4 mt-4 border-t border-white/10 text-xs text-omnigo-lime font-semibold">
+          ✓ Save up to 40% on daily rides
+        </div>
+      </div>
+
+      <div class="glass-panel rounded-3xl p-6 border border-white/10 hover:border-omnigo-mint/40 transition-all flex flex-col justify-between">
+        <div>
+          <div class="w-12 h-12 rounded-2xl bg-omnigo-mint/15 text-omnigo-mint flex items-center justify-center mb-4">
+            <i data-lucide="shield" class="w-6 h-6"></i>
+          </div>
+          <span class="text-[11px] font-bold text-omnigo-mint uppercase tracking-wider">Financial Safety</span>
+          <h3 class="font-display font-bold text-xl text-white mt-1 mb-2">100% Escrow Protection</h3>
+          <p class="text-gray-400 text-xs sm:text-sm leading-relaxed">
+            Never lose money to fake sellers. Your payment is held safely in our digital escrow vault until you receive your parcel and verify the OTP.
+          </p>
+        </div>
+        <div class="pt-4 mt-4 border-t border-white/10 text-xs text-omnigo-mint font-semibold">
+          ✓ Zero fake deliveries or scams
+        </div>
+      </div>
+
+      <div class="glass-panel rounded-3xl p-6 border border-white/10 hover:border-omnigo-cyan/40 transition-all flex flex-col justify-between">
+        <div>
+          <div class="w-12 h-12 rounded-2xl bg-omnigo-cyan/15 text-omnigo-cyan flex items-center justify-center mb-4">
+            <i data-lucide="heart-handshake" class="w-6 h-6"></i>
+          </div>
+          <span class="text-[11px] font-bold text-omnigo-cyan uppercase tracking-wider">Fair to Partners</span>
+          <h3 class="font-display font-bold text-xl text-white mt-1 mb-2">Instant Driver Cashouts</h3>
+          <p class="text-gray-400 text-xs sm:text-sm leading-relaxed">
+            Drivers don't wait weeks for their hard-earned money. Earnings are credited in real time to JazzCash, Easypaisa, or bank accounts.
+          </p>
+        </div>
+        <div class="pt-4 mt-4 border-t border-white/10 text-xs text-omnigo-cyan font-semibold">
+          ✓ Transparent, lowest commission
+        </div>
+      </div>
+
+      <div class="glass-panel rounded-3xl p-6 border border-white/10 hover:border-white/30 transition-all flex flex-col justify-between">
+        <div>
+          <div class="w-12 h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center mb-4">
+            <i data-lucide="layers" class="w-6 h-6 text-omnigo-lime"></i>
+          </div>
+          <span class="text-[11px] font-bold text-gray-300 uppercase tracking-wider">All-In-One Unified</span>
+          <h3 class="font-display font-bold text-xl text-white mt-1 mb-2">One Super App</h3>
+          <p class="text-gray-400 text-xs sm:text-sm leading-relaxed">
+            Stop juggling 4 separate apps for rides, parcel delivery, grocery, and shopping. OMNIGO saves your phone storage and battery.
+          </p>
+        </div>
+        <div class="pt-4 mt-4 border-t border-white/10 text-xs text-white font-semibold">
+          ✓ 1 Login, 1 Wallet, 3 Services
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 5. THREE CORE SERVICES (INTERACTIVE TABS)                -->
+  <!-- ======================================================== -->
+  <section id="services" class="py-20 px-4 sm:px-6 max-w-7xl mx-auto border-t border-white/10">
+    <div class="text-center max-w-3xl mx-auto mb-14">
+      <div class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/5 border border-white/10 text-omnigo-lime text-xs font-semibold uppercase tracking-wider mb-4">
+        ⚡ Infinite Possibilities
+      </div>
+      <h2 class="font-display font-extrabold text-3xl sm:text-5xl text-white tracking-tight mb-4">
+        The 3 Pillars of OMNIGO
+      </h2>
+      <p class="text-gray-400 text-base sm:text-lg">
+        Tailored experiences built for everyone in the ecosystem.
+      </p>
+
+      <div class="flex items-center justify-center gap-2 mt-8 p-1.5 glass-panel rounded-full max-w-md mx-auto">
+        <button data-tab-target="customers" class="flex-1 py-2 px-4 rounded-full text-xs sm:text-sm font-bold bg-omnigo-lime text-black transition-all">
+          For Customers
+        </button>
+        <button data-tab-target="riders" class="flex-1 py-2 px-4 rounded-full text-xs sm:text-sm font-bold text-white/70 hover:text-white transition-all">
+          For Drivers
+        </button>
+        <button data-tab-target="vendors" class="flex-1 py-2 px-4 rounded-full text-xs sm:text-sm font-bold text-white/70 hover:text-white transition-all">
+          For Merchants
+        </button>
+      </div>
+    </div>
+
+    <!-- 3 Core Service Cards Grid (Customers) -->
+    <div data-tab-content="customers" class="grid grid-cols-1 md:grid-cols-3 gap-8">
+      
+      <!-- Card 1: Rides -->
+      <div class="glass-panel glass-panel-hover rounded-3xl p-8 flex flex-col justify-between group">
+        <div>
+          <div class="w-14 h-14 rounded-2xl bg-omnigo-lime/10 border border-omnigo-lime/30 flex items-center justify-center text-omnigo-lime mb-6 group-hover:scale-110 transition-transform">
+            <i data-lucide="car" class="w-7 h-7"></i>
+          </div>
+          <span class="text-xs font-bold text-omnigo-lime uppercase tracking-wider">Ride Hailing</span>
+          <h3 class="font-display font-extrabold text-2xl text-white mt-1 mb-3">Direct Fare Bidding</h3>
+          <p class="text-gray-400 text-sm leading-relaxed mb-6">
+            Propose your fair price, choose among competitive bids from verified captains, and ride comfortably in Bikes, Rickshaws, or AC Sedans.
+          </p>
+        </div>
+        <div class="pt-4 border-t border-white/10 flex items-center justify-between text-xs font-semibold text-gray-300">
+          <span>Bike, Auto, AC Sedan</span>
+          <i data-lucide="arrow-right" class="w-4 h-4 text-omnigo-lime group-hover:translate-x-1 transition-transform"></i>
+        </div>
+      </div>
+
+      <!-- Card 2: Express Delivery -->
+      <div class="glass-panel glass-panel-hover rounded-3xl p-8 flex flex-col justify-between group">
+        <div>
+          <div class="w-14 h-14 rounded-2xl bg-omnigo-mint/10 border border-omnigo-mint/30 flex items-center justify-center text-omnigo-mint mb-6 group-hover:scale-110 transition-transform">
+            <i data-lucide="package" class="w-7 h-7"></i>
+          </div>
+          <span class="text-xs font-bold text-omnigo-mint uppercase tracking-wider">Fast Courier</span>
+          <h3 class="font-display font-extrabold text-2xl text-white mt-1 mb-3">Instant Hyperlocal Delivery</h3>
+          <p class="text-gray-400 text-sm leading-relaxed mb-6">
+            Send keys, documents, lunchboxes, or urgent retail goods across town in under 30 minutes with digital camera pickup proof and OTP protection.
+          </p>
+        </div>
+        <div class="pt-4 border-t border-white/10 flex items-center justify-between text-xs font-semibold text-gray-300">
+          <span>Photo Proof & OTP Protection</span>
+          <i data-lucide="arrow-right" class="w-4 h-4 text-omnigo-mint group-hover:translate-x-1 transition-transform"></i>
+        </div>
+      </div>
+
+      <!-- Card 3: Multi-Vendor Mart -->
+      <div class="glass-panel glass-panel-hover rounded-3xl p-8 flex flex-col justify-between group">
+        <div>
+          <div class="w-14 h-14 rounded-2xl bg-omnigo-cyan/10 border border-omnigo-cyan/30 flex items-center justify-center text-omnigo-cyan mb-6 group-hover:scale-110 transition-transform">
+            <i data-lucide="shopping-bag" class="w-7 h-7"></i>
+          </div>
+          <span class="text-xs font-bold text-omnigo-cyan uppercase tracking-wider">E-Commerce</span>
+          <h3 class="font-display font-extrabold text-2xl text-white mt-1 mb-3">Multi-Vendor Mart</h3>
+          <p class="text-gray-400 text-sm leading-relaxed mb-6">
+            Explore authentic local neighborhood stores, electronics, and groceries with secure digital checkout and speedy same-day dispatch.
+          </p>
+        </div>
+        <div class="pt-4 border-t border-white/10 flex items-center justify-between text-xs font-semibold text-gray-300">
+          <span>Verified Local Merchants</span>
+          <i data-lucide="arrow-right" class="w-4 h-4 text-omnigo-cyan group-hover:translate-x-1 transition-transform"></i>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Drivers Tab -->
+    <div data-tab-content="riders" class="hidden grid-cols-1 md:grid-cols-3 gap-8">
+      <div class="glass-panel rounded-3xl p-8">
+        <div class="w-12 h-12 rounded-xl bg-omnigo-lime/15 text-omnigo-lime flex items-center justify-center mb-4">
+          <i data-lucide="percent" class="w-6 h-6"></i>
+        </div>
+        <h4 class="font-display font-bold text-xl text-white mb-2">Zero High Commissions</h4>
+        <p class="text-gray-400 text-sm">Keep up to 90%+ of what you earn. Transparent flat fee structure with no surprise deductions.</p>
+      </div>
+      <div class="glass-panel rounded-3xl p-8">
+        <div class="w-12 h-12 rounded-xl bg-omnigo-mint/15 text-omnigo-mint flex items-center justify-center mb-4">
+          <i data-lucide="wallet" class="w-6 h-6"></i>
+        </div>
+        <h4 class="font-display font-bold text-xl text-white mb-2">Instant Wallet Payouts</h4>
+        <p class="text-gray-400 text-sm">Withdraw your earnings directly to your bank account, JazzCash, or Easypaisa 24/7 in real time.</p>
+      </div>
+      <div class="glass-panel rounded-3xl p-8">
+        <div class="w-12 h-12 rounded-xl bg-omnigo-cyan/15 text-omnigo-cyan flex items-center justify-center mb-4">
+          <i data-lucide="toggle-right" class="w-6 h-6"></i>
+        </div>
+        <h4 class="font-display font-bold text-xl text-white mb-2">Dual Mode: Ride + Delivery</h4>
+        <p class="text-gray-400 text-sm">Switch effortlessly between passenger rides and parcel deliveries within the same app to maximize income.</p>
+      </div>
+    </div>
+
+    <!-- Vendors Tab -->
+    <div data-tab-content="vendors" class="hidden grid-cols-1 md:grid-cols-3 gap-8">
+      <div class="glass-panel rounded-3xl p-8">
+        <div class="w-12 h-12 rounded-xl bg-omnigo-cyan/15 text-omnigo-cyan flex items-center justify-center mb-4">
+          <i data-lucide="store" class="w-6 h-6"></i>
+        </div>
+        <h4 class="font-display font-bold text-xl text-white mb-2">Digital Merchant Storefront</h4>
+        <p class="text-gray-400 text-sm">Upload your entire product inventory, set bulk discounts, and start receiving orders in minutes.</p>
+      </div>
+      <div class="glass-panel rounded-3xl p-8">
+        <div class="w-12 h-12 rounded-xl bg-omnigo-lime/15 text-omnigo-lime flex items-center justify-center mb-4">
+          <i data-lucide="truck" class="w-6 h-6"></i>
+        </div>
+        <h4 class="font-display font-bold text-xl text-white mb-2">Auto-Assigned Fleet</h4>
+        <p class="text-gray-400 text-sm">No need to maintain delivery boys. OMNIGO's network automatically dispatches nearest riders to your store.</p>
+      </div>
+      <div class="glass-panel rounded-3xl p-8">
+        <div class="w-12 h-12 rounded-xl bg-omnigo-mint/15 text-omnigo-mint flex items-center justify-center mb-4">
+          <i data-lucide="shield-check" class="w-6 h-6"></i>
+        </div>
+        <h4 class="font-display font-bold text-xl text-white mb-2">Guaranteed Escrow Settlement</h4>
+        <p class="text-gray-400 text-sm">Zero chargebacks. Payments are held in secure escrow and released upon verified customer handover.</p>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 6. LUXURY FINTECH & ESCROW VAULT                         -->
+  <!-- ======================================================== -->
+  <section id="fintech" class="py-20 px-4 sm:px-6 max-w-7xl mx-auto border-t border-white/10">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+      
+      <!-- Left: 3D Royal Indigo Banking Card -->
+      <div class="lg:col-span-5 flex justify-center">
+        <div class="relative w-full max-w-sm">
+          <div class="absolute -inset-4 bg-indigo-600/20 rounded-3xl blur-2xl"></div>
+
+          <div class="relative rounded-3xl p-7 bg-gradient-to-br from-[#303F9F] to-[#1A237E] border border-white/20 shadow-2xl text-white overflow-hidden aspect-[1.58/1] flex flex-col justify-between transform hover:-rotate-1 hover:scale-105 transition-all duration-300">
+            <div class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent pointer-events-none"></div>
+
+            <div class="flex items-center justify-between">
+              <span class="font-display font-black text-lg tracking-wider text-omnigo-lime">OMNIGO ESCROW</span>
+              <i data-lucide="wifi" class="w-6 h-6 text-white/80 rotate-90"></i>
+            </div>
+
+            <div class="w-11 h-8 rounded-md bg-amber-300/80 border border-amber-200/50 flex items-center justify-center shadow-inner">
+              <div class="w-7 h-5 border border-amber-900/30 rounded-sm"></div>
+            </div>
+
+            <div>
+              <div class="text-[11px] uppercase tracking-wider text-white/70">Protected Account Balance</div>
+              <div class="font-display font-black text-2xl tracking-tight mt-0.5">PKR 124,500.00</div>
+              <div class="flex items-center justify-between text-[11px] text-white/70 mt-2 font-mono">
+                <span>•••• 8824</span>
+                <span>EXP 09/29</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Content & Guarantees -->
+      <div class="lg:col-span-7">
+        <div class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-semibold uppercase tracking-wider mb-4">
+          🛡️ Zero-Fraud Financial Architecture
+        </div>
+        <h2 class="font-display font-extrabold text-3xl sm:text-5xl text-white tracking-tight mb-6">
+          100% Escrow Guarantee. <br/>
+          <span class="text-gradient-lime">Your Money Is Safe Until Delivery.</span>
+        </h2>
+        <p class="text-gray-400 text-base sm:text-lg mb-8 leading-relaxed">
+          Buyer payments are locked in a cryptographic digital escrow wallet and only released once the OTP confirms verified order handover.
+        </p>
+
+        <div class="space-y-4">
+          <div class="flex items-start gap-4 p-4 rounded-2xl bg-white/5 border border-white/10">
+            <div class="w-8 h-8 rounded-lg bg-omnigo-lime/10 text-omnigo-lime flex items-center justify-center shrink-0 mt-0.5">
+              <i data-lucide="check" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h4 class="font-display font-bold text-white text-base">PayFast & Multi-Gateway Integration</h4>
+              <p class="text-gray-400 text-sm">Instant top-ups and checkouts via debit/credit cards, 1Link, Easypaisa, and JazzCash.</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-4 p-4 rounded-2xl bg-white/5 border border-white/10">
+            <div class="w-8 h-8 rounded-lg bg-omnigo-mint/10 text-omnigo-mint flex items-center justify-center shrink-0 mt-0.5">
+              <i data-lucide="file-text" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h4 class="font-display font-bold text-white text-base">Immutable Cryptographic Receipts</h4>
+              <p class="text-gray-400 text-sm">Every trip and store order produces a tamper-proof digital invoice with unique tracking hashes.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 7. AI SELF-HEALING & SAFETY SURVEILLANCE                 -->
+  <!-- ======================================================== -->
+  <section id="ai-safety" class="py-20 px-4 sm:px-6 max-w-7xl mx-auto border-t border-white/10">
+    <div class="relative rounded-3xl bg-gradient-to-br from-admin-navy via-admin-slate to-admin-violet border border-white/15 p-8 sm:p-12 shadow-2xl overflow-hidden">
+      
+      <div class="absolute -right-20 -bottom-20 w-96 h-96 bg-omnigo-lime/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
+        
+        <div class="lg:col-span-7">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-admin-green/10 border border-admin-green/30 text-admin-green text-xs font-bold uppercase tracking-wider mb-4">
+            <span class="w-2 h-2 rounded-full bg-admin-green animate-ping"></span>
+            AI Control Center Engine
+          </div>
+          <h2 class="font-display font-extrabold text-3xl sm:text-4xl text-white tracking-tight mb-4">
+            Self-Healing Infrastructure & Live Passenger Surveillance
+          </h2>
+          <p class="text-gray-300 text-base leading-relaxed mb-6">
+            OMNIGO runs automated AI self-healing diagnostics that monitor ride safety, detect route anomalies, and auto-resolve database ledger discrepancies within milliseconds.
+          </p>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 pt-4 border-t border-white/10">
+            <div>
+              <div class="font-display font-black text-2xl text-admin-green">99.98%</div>
+              <div class="text-xs text-gray-400">System Uptime</div>
+            </div>
+            <div>
+              <div class="font-display font-black text-2xl text-omnigo-lime">&lt; 150ms</div>
+              <div class="text-xs text-gray-400">WebSocket Telemetry</div>
+            </div>
+            <div>
+              <div class="font-display font-black text-2xl text-white">24/7</div>
+              <div class="text-xs text-gray-400">Automated Audit</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lg:col-span-5 bg-black/40 rounded-2xl border border-white/10 p-6">
+          <div class="flex items-center justify-between pb-3 border-b border-white/10">
+            <span class="text-xs font-bold text-gray-300 flex items-center gap-2">
+              <i data-lucide="shield" class="w-4 h-4 text-admin-green"></i> Security Diagnostics
+            </span>
+            <span class="text-[11px] px-2 py-0.5 rounded-full bg-admin-green/20 text-admin-green font-bold">
+              OPTIMAL
+            </span>
+          </div>
+
+          <div class="space-y-3 mt-4 text-xs font-mono">
+            <div class="flex items-center justify-between text-gray-300">
+              <span>Ride Route Deviation Guard</span>
+              <span class="text-admin-green">ACTIVE</span>
+            </div>
+            <div class="flex items-center justify-between text-gray-300">
+              <span>Escrow Ledger Proof Hash</span>
+              <span class="text-admin-green">VERIFIED</span>
+            </div>
+            <div class="flex items-center justify-between text-gray-300">
+              <span>Driver License Verification</span>
+              <span class="text-admin-green">100%</span>
+            </div>
+            <div class="flex items-center justify-between text-gray-300">
+              <span>SOS Emergency Protocol</span>
+              <span class="text-admin-green">STANDBY</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 8. APP DOWNLOAD & CONVERSION BANNER                      -->
+  <!-- ======================================================== -->
+  <section id="download" class="py-20 px-4 sm:px-6 max-w-7xl mx-auto border-t border-white/10">
+    <div class="relative rounded-3xl bg-omnigo-olive/70 border border-omnigo-lime/40 p-8 sm:p-14 text-center overflow-hidden shadow-[0_0_50px_rgba(202,255,51,0.15)]">
+      
+      <div class="absolute inset-0 bg-gradient-to-b from-omnigo-lime/10 to-transparent pointer-events-none"></div>
+
+      <div class="relative z-10 max-w-3xl mx-auto flex flex-col items-center">
+        
+        <div class="w-16 h-16 rounded-full bg-omnigo-lime flex items-center justify-center text-black mb-6 shadow-xl animate-float">
+          <i data-lucide="download" class="w-8 h-8 stroke-[2.5]"></i>
+        </div>
+
+        <h2 class="font-display font-extrabold text-3xl sm:text-5xl text-white tracking-tight mb-4">
+          Download OMNIGO App on Your Phone
+        </h2>
+        <p class="text-gray-300 text-base sm:text-lg mb-8 max-w-xl">
+          Get the official Android APK release directly to test real-time ride bidding, instant parcel courier, and escrow shopping today.
+        </p>
+
+        <!-- Direct Download Card -->
+        <div class="glass-panel rounded-2xl p-6 border border-white/20 max-w-lg w-full mb-6">
+          <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="text-left">
+              <div class="font-display font-bold text-white text-lg flex items-center gap-2">
+                <span>OMNIGO Android Release</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-omnigo-lime text-black font-extrabold">v1.0.0</span>
+              </div>
+              <div class="text-xs text-gray-400 mt-1">
+                Size: ~118 MB • Verified Clean & Safe • Direct APK
+              </div>
+            </div>
+
+            <button class="trigger-apk-download w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-omnigo-lime hover:bg-[#bbf01f] text-black font-display font-black text-sm px-6 py-3.5 rounded-full shadow-lg hover:scale-105 transition-all">
+              <i data-lucide="download" class="w-4 h-4 stroke-[3]"></i>
+              <span>Download File</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-400">
+          <span class="flex items-center gap-1.5"><i data-lucide="check-circle" class="w-4 h-4 text-omnigo-lime"></i> Compatible with Android 8.0+</span>
+          <span class="flex items-center gap-1.5"><i data-lucide="shield-check" class="w-4 h-4 text-omnigo-mint"></i> SHA1 Verified</span>
+          <span class="flex items-center gap-1.5"><i data-lucide="zap" class="w-4 h-4 text-omnigo-cyan"></i> Instant 1-Click Install</span>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- 9. MINIMALIST LUXURY FOOTER                              -->
+  <!-- ======================================================== -->
+  <footer class="border-t border-white/10 bg-[#0A0A0A] pt-16 pb-12 px-4 sm:px-6">
+    <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-10 pb-12 border-b border-white/10">
+      
+      <!-- Brand Col -->
+      <div class="md:col-span-5">
+        <div class="flex items-center gap-2.5 mb-4">
+          <div class="w-9 h-9 rounded-full bg-omnigo-lime flex items-center justify-center text-black font-bold">
+            <i data-lucide="zap" class="w-5 h-5 fill-black stroke-black"></i>
+          </div>
+          <span class="font-display font-extrabold text-2xl text-white">OMNIGO</span>
+        </div>
+        <p class="text-gray-400 text-sm max-w-sm mb-6 leading-relaxed">
+          The next-generation unified platform bridging mobility, on-demand logistics, and commerce through trust and fair negotiation.
+        </p>
+        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          <span>All Core Services Operational</span>
+        </div>
+      </div>
+
+      <!-- Links Col 1 -->
+      <div class="md:col-span-2">
+        <h4 class="font-display font-bold text-white text-sm mb-4 uppercase tracking-wider">Ecosystem</h4>
+        <ul class="space-y-2.5 text-sm text-gray-400">
+          <li><a href="#live-demo" class="hover:text-omnigo-lime transition-colors">Ride Bidding</a></li>
+          <li><a href="#human-story" class="hover:text-omnigo-lime transition-colors">Order Pipeline</a></li>
+          <li><a href="#services" class="hover:text-omnigo-lime transition-colors">Express Courier</a></li>
+          <li><a href="#fintech" class="hover:text-omnigo-lime transition-colors">Escrow Wallet</a></li>
+        </ul>
+      </div>
+
+      <!-- Links Col 2 -->
+      <div class="md:col-span-2">
+        <h4 class="font-display font-bold text-white text-sm mb-4 uppercase tracking-wider">Portals</h4>
+        <ul class="space-y-2.5 text-sm text-gray-400">
+          <li><a href="#" class="hover:text-omnigo-lime transition-colors">Customer Web App</a></li>
+          <li><a href="#" class="hover:text-omnigo-lime transition-colors">Driver Partner App</a></li>
+          <li><a href="#" class="hover:text-omnigo-lime transition-colors">Vendor Merchant Hub</a></li>
+          <li><a href="#" class="hover:text-omnigo-lime transition-colors">Admin Command Center</a></li>
+        </ul>
+      </div>
+
+      <!-- Links Col 3 -->
+      <div class="md:col-span-3">
+        <h4 class="font-display font-bold text-white text-sm mb-4 uppercase tracking-wider">Direct APK Link</h4>
+        <p class="text-xs text-gray-400 mb-3">Download the latest official build directly:</p>
+        <a href="downloads/omnigo-app-release.apk" download="OMNIGO-SuperApp-v1.0.apk" class="inline-flex items-center gap-2 text-xs bg-white/5 hover:bg-white/10 text-omnigo-lime border border-omnigo-lime/30 px-4 py-2.5 rounded-xl transition-all font-semibold">
+          <i data-lucide="file-down" class="w-4 h-4"></i>
+          <span>omnigo-app-release.apk (118 MB)</span>
+        </a>
+      </div>
+
+    </div>
+
+    <div class="max-w-7xl mx-auto pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-500">
+      <div>
+        © 2026 OMNIGO Technologies Inc. All rights reserved.
+      </div>
+      <div class="flex items-center gap-6">
+        <a href="#" class="hover:text-gray-300">Privacy Policy</a>
+        <a href="#" class="hover:text-gray-300">Terms of Service</a>
+        <a href="#" class="hover:text-gray-300">Escrow Security</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ======================================================== -->
+  <!-- MODAL: DOWNLOAD OPTIONS                                  -->
+  <!-- ======================================================== -->
+  <div id="download-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div class="glass-card rounded-3xl max-w-md w-full p-6 sm:p-8 border border-white/20 shadow-2xl relative">
+      <button class="close-download-modal absolute top-5 right-5 text-gray-400 hover:text-white">
+        <i data-lucide="x" class="w-6 h-6"></i>
+      </button>
+
+      <div class="text-center mb-6">
+        <div class="w-12 h-12 rounded-full bg-omnigo-lime flex items-center justify-center text-black mx-auto mb-3 font-bold">
+          <i data-lucide="download" class="w-6 h-6"></i>
+        </div>
+        <h3 class="font-display font-bold text-2xl text-white">Choose Download Method</h3>
+        <p class="text-xs text-gray-400 mt-1">Get OMNIGO Super App on your device</p>
+      </div>
+
+      <div class="space-y-3">
+        <button class="trigger-apk-download w-full flex items-center justify-between p-4 rounded-2xl bg-white/5 hover:bg-omnigo-lime hover:text-black border border-white/10 transition-all text-left group">
+          <div class="flex items-center gap-3">
+            <i data-lucide="smartphone" class="w-6 h-6 text-omnigo-lime group-hover:text-black"></i>
+            <div>
+              <div class="font-bold text-sm text-white group-hover:text-black">Direct Android APK</div>
+              <div class="text-[11px] text-gray-400 group-hover:text-black/80">Version 1.0.0 (118 MB) • Fast Download</div>
+            </div>
+          </div>
+          <i data-lucide="download" class="w-4 h-4 text-gray-400 group-hover:text-black"></i>
+        </button>
+
+        <div class="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10 opacity-70">
+          <div class="flex items-center gap-3">
+            <i data-lucide="play" class="w-6 h-6 text-gray-400"></i>
+            <div>
+              <div class="font-bold text-sm text-white">Google Play Store</div>
+              <div class="text-[11px] text-gray-400">Review Pending (Releasing Soon)</div>
+            </div>
+          </div>
+          <span class="text-[10px] bg-white/10 text-gray-300 px-2 py-0.5 rounded font-mono">SOON</span>
+        </div>
+
+        <div class="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10 opacity-70">
+          <div class="flex items-center gap-3">
+            <i data-lucide="apple" class="w-6 h-6 text-gray-400"></i>
+            <div>
+              <div class="font-bold text-sm text-white">Apple App Store (iOS)</div>
+              <div class="text-[11px] text-gray-400">iOS Build in TestFlight</div>
+            </div>
+          </div>
+          <span class="text-[10px] bg-white/10 text-gray-300 px-2 py-0.5 rounded font-mono">SOON</span>
+        </div>
+      </div>
+
+      <div class="mt-6 pt-4 border-t border-white/10 text-center">
+        <button class="close-download-modal text-xs text-gray-400 hover:text-white">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- TOAST: DOWNLOAD IN PROGRESS NOTIFICATION                -->
+  <!-- ======================================================== -->
+  <div id="download-toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+    <div class="glass-panel border-omnigo-lime/50 rounded-2xl p-4 shadow-2xl flex items-center gap-3 text-white">
+      <div class="w-8 h-8 rounded-full bg-omnigo-lime text-black flex items-center justify-center font-bold">
+        <i data-lucide="arrow-down-circle" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <div class="text-sm font-bold text-white">Downloading OMNIGO APK...</div>
+        <div class="text-xs text-gray-300">File: OMNIGO-SuperApp-v1.0.apk (118 MB)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Script -->
+  <script src="app.js"></script>
+
+  <!-- Initialize Lucide Icons -->
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>

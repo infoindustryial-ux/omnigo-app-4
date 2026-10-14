@@ -168,7 +168,13 @@ class ApiEndpoints {
 
   // ── Payments (Order & Payment Orchestrator Service) ──────────────
   static String payfastPayment() => '$paymentBase/payments/payfast/payment';
+  static String payfastIPN() => '$paymentBase/payments/payfast/ipn';
   static String payfast3DSCallback() => '$paymentBase/payments/payfast/3ds_callback';
+  static String safepayCheckout() => '$paymentBase/payments/safepay/checkout';
+  static String safepayCharge() => '$paymentBase/payments/safepay/charge';
+  static String safepay3DSCallback() => '$paymentBase/payments/safepay/3ds/callback';
+  static String safepayStatus(String tracker) => '$paymentBase/payments/safepay/status/$tracker';
+  static String safepayQuickLink() => '$paymentBase/payments/safepay/quick-link';
   static String savedCards() => '$paymentBase/payments/cards';
   static String saveCard() => '$paymentBase/payments/cards';
   static String savedCard(String cardId) => '$paymentBase/payments/cards/$cardId';
@@ -207,7 +213,7 @@ class ApiEndpoints {
   static String customerReturnOrder(String trackingId) =>
       '$orderBase/orders/$trackingId/return';
   static String customerReturnRequest(String trackingId) =>
-      '$baseUrl/api/v1/returns/$trackingId/request';
+      '$orderBase/returns/$trackingId/request';
   static String refundStatus(String orderId) =>
       '$orderBase/finance/refund/$orderId';
 
@@ -443,6 +449,18 @@ class ApiEndpoints {
       '$adminBase/admin/finance/vendor-payouts/$id/approve';
   static String adminVendorPayoutReject(String id) =>
       '$adminBase/admin/finance/vendor-payouts/$id/reject';
+  static String adminVendorPayoutDisburseSafepay(String id) =>
+      '$adminBase/admin/finance/vendor-payouts/$id/disburse-safepay';
+
+  // ── Admin: Rider Payouts ────────────────────────────────────────
+  static String adminRiderPayouts({String status = 'all', int limit = 50, int offset = 0}) =>
+      '$adminBase/admin/finance/rider-payouts?status=$status&limit=$limit&offset=$offset';
+  static String adminRiderPayoutApprove(String id) =>
+      '$adminBase/admin/finance/rider-payouts/$id/approve';
+  static String adminRiderPayoutReject(String id) =>
+      '$adminBase/admin/finance/rider-payouts/$id/reject';
+  static String adminRiderPayoutDisburseSafepay(String id) =>
+      '$adminBase/admin/finance/rider-payouts/$id/disburse-safepay';
 
   // ── Admin: Stripe Events Audit ──────────────────────────────────
   static String adminStripeEvents({String? type, int limit = 50, int offset = 0}) {

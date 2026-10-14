@@ -95,13 +95,16 @@ func (w *RefundProcessorWorker) processSingleRefund(ctx context.Context, outboxI
 	// 1. Look up the customer tracking ID and refund amount from the order
 	var customerID string
 	var orderTotalPaisa int64
+	var totalBilledPaisa int64
 	var paymentGateway string
 	err := w.db.QueryRow(ctx,
-		`SELECT COALESCE(customer_tracking_id, ''), COALESCE(total_amount_paisa, 0),
+		`SELECT COALESCE(customer_tracking_id, ''),
+		        COALESCE(total_amount_paisa, 0),
+		        COALESCE(total_billed_amount_paisa, 0),
 		        COALESCE(payment_gateway, '')
 		 FROM orders WHERE order_tracking_id = $1`,
 		payload.OrderID,
-	).Scan(&customerID, &orderTotalPaisa, &paymentGateway)
+	).Scan(&customerID, &orderTotalPaisa, &totalBilledPaisa, &paymentGateway)
 	if err != nil {
 		return fmt.Errorf("order lookup failed for %s: %w", payload.OrderID, err)
 	}
@@ -115,8 +118,10 @@ func (w *RefundProcessorWorker) processSingleRefund(ctx context.Context, outboxI
 	var refundPaisa int64
 	if payload.RefundAmount > 0 {
 		refundPaisa = int64(math.Round(payload.RefundAmount * 100))
+	} else if totalBilledPaisa > 0 {
+		// Default: full order refund including delivery fee
+		refundPaisa = totalBilledPaisa
 	} else {
-		// Default: full order refund
 		refundPaisa = orderTotalPaisa
 	}
 

@@ -257,6 +257,8 @@ func (h *DeliveryHandler) RegisterRoutes(router *gin.Engine) {
 			riderOnly.PATCH("/gig/:id/status", h.UpdateGigStatus)
 			riderOnly.POST("/gig/upload-proof", h.UploadProof)
 			riderOnly.POST("/gig/cancel", h.CancelGig)
+			riderOnly.POST("/gig/breakdown", h.EmergencyBreakdown)
+			riderOnly.POST("/gig/rescue/accept", h.AcceptRescueGig)
 		}
 
 		// Authenticated delivery queries & disputes
@@ -424,4 +426,76 @@ func (h *DeliveryHandler) CancelGig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "gig cancelled"})
+}
+
+// EmergencyBreakdown handles rider declaring an emergency vehicle breakdown or accident mid-transit
+func (h *DeliveryHandler) EmergencyBreakdown(c *gin.Context) {
+	var req models.EmergencyBreakdownRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	callerID := middleware.GetTrackingID(c)
+	if callerID != "" && req.RiderTrackID == "" {
+		req.RiderTrackID = callerID
+	}
+
+	gig, handoverPIN, err := h.svc.EmergencyBreakdown(c.Request.Context(), &req)
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "forbidden") {
+			c.JSON(http.StatusForbidden, gin.H{"error": errStr})
+			return
+		}
+		if strings.Contains(errStr, "conflict") {
+			c.JSON(http.StatusConflict, gin.H{"error": errStr})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errStr})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":       "breakdown_registered",
+		"tracking_id":  gig.TrackingID,
+		"handover_pin": handoverPIN,
+		"message":      "Rescue gig has been broadcasted to nearby riders. Please give this Handover PIN to the arriving rescue rider.",
+	})
+}
+
+// AcceptRescueGig handles a second rider accepting physical handover of a stranded parcel
+func (h *DeliveryHandler) AcceptRescueGig(c *gin.Context) {
+	var req models.RescueAcceptRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	callerID := middleware.GetTrackingID(c)
+	if callerID != "" && req.RescueRiderID == "" {
+		req.RescueRiderID = callerID
+	}
+
+	gig, err := h.svc.AcceptRescueGig(c.Request.Context(), &req)
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "unauthorized") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": errStr})
+			return
+		}
+		if strings.Contains(errStr, "conflict") {
+			c.JSON(http.StatusConflict, gin.H{"error": errStr})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errStr})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "rescue_accepted",
+		"tracking_id": gig.TrackingID,
+		"new_status":  gig.Status,
+		"message":     "Custody transferred successfully. Please deliver package to customer.",
+	})
 }
