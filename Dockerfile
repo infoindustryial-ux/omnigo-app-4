@@ -47,4 +47,4 @@ EXPOSE ${PORT}
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
   CMD wget -qO- "http://127.0.0.1:${PORT}/health" || exit 1
 
-CMD ["sh", "-c", "exec /app/bin/${SERVICE_NAME}"]
+CMD ["sh", "-c", "if [ -n \"$DATABASE_URL\" ] && [ -d /app/migrations ]; then echo '=== Running migrations ==='; for f in $(ls -v /app/migrations/*.sql 2>/dev/null | grep -v '\\.down\\.sql$'); do echo \"Running $f...\"; psql \"$DATABASE_URL\" -f \"$f\" || true; done; echo '=== Migrations complete ==='; fi; exec /app/bin/${SERVICE_NAME}"]
