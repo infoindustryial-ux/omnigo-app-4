@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../../../core/di/service_locator.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/presentation/screens/chat_room_screen.dart';
 
@@ -36,10 +38,17 @@ class _PreOrderChatScreenState extends State<PreOrderChatScreen> {
     });
 
     try {
-      final data = await ApiClient().get('/stores') as Map<String, dynamic>;
-      final List<dynamic> storesData = data['stores'] as List<dynamic>? ?? data['data'] as List<dynamic>? ?? [];
+      final dynamic response = await sl<ApiClient>().get(ApiEndpoints.storesList());
+      List<dynamic> storesData = [];
+      if (response is List) {
+        storesData = response;
+      } else if (response is Map) {
+        storesData = (response['stores'] as List<dynamic>?) ??
+            (response['data'] as List<dynamic>?) ??
+            [];
+      }
       setState(() {
-        _stores = storesData.cast<Map<String, dynamic>>();
+        _stores = storesData.whereType<Map<String, dynamic>>().toList();
         _filteredStores = _stores;
         _isLoading = false;
       });

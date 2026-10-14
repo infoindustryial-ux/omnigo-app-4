@@ -350,7 +350,7 @@ class VendorLiveMapScreenState extends State<VendorLiveMapScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("Stateless GIS Stream Connected", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                      Text("Listening to topic: rider telemetry via Port 8087", style: TextStyle(color: Colors.white54, fontSize: 10)),
+                      Text("Listening to topic: rider telemetry via Railway WSS Gateway", style: TextStyle(color: Colors.white54, fontSize: 10)),
                     ],
                   ),
                 ],

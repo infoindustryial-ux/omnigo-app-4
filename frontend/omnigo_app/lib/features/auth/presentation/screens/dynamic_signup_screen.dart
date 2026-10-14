@@ -220,7 +220,7 @@ class DynamicSignupScreenState extends State<DynamicSignupScreen> {
     try {
       if (_isLogin) {
         // --- API LOGIN ---
-        dynamic response = await _apiClient.post('/auth/login', {
+        dynamic response = await _apiClient.post(ApiEndpoints.authLogin(), {
           'email': email,
           'password': password,
           'role': role,
@@ -246,7 +246,9 @@ class DynamicSignupScreenState extends State<DynamicSignupScreen> {
             if (mounted) setState(() => _isLoading = false);
             return;
           }
-          final endpoint = isBackdoor ? '/auth/backdoor-otp/verify' : '/auth/2fa/challenge';
+          final endpoint = isBackdoor
+              ? ApiEndpoints.authBackdoorOtpVerify()
+              : ApiEndpoints.auth2FAChallenge();
           final payload = <String, dynamic>{
             'challenge_id': challengeId,
             'code': code,
@@ -320,11 +322,11 @@ class DynamicSignupScreenState extends State<DynamicSignupScreen> {
           'vehicle_plate_number': _selectedRole.toLowerCase() == 'rider' ? _vehiclePlateController.text.trim() : '',
         };
 
-        await _apiClient.post('/auth/register', body);
+        await _apiClient.post(ApiEndpoints.authRegister(), body);
 
         if (role == 'customer') {
           // Customers are verified instantly — auto-login and enter dashboard directly
-          final loginResponse = await _apiClient.post('/auth/login', {
+          final loginResponse = await _apiClient.post(ApiEndpoints.authLogin(), {
             'email': email,
             'password': password,
             'role': role,

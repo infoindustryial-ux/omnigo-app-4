@@ -58,6 +58,7 @@ class ApiEndpoints {
   // ── Auth Service ─────────────────────────────────────────────────
   static String authLogin() => '$authBase/auth/login';
   static String authRegister() => '$authBase/auth/register';
+  static String authLogout() => '$authBase/auth/logout';
   static String authRefresh() => '$authBase/auth/refresh';
   static String authProfile() => '$authBase/auth/profile';
 
@@ -71,6 +72,8 @@ class ApiEndpoints {
   static String auth2FAVerifyEnrollment() =>
       '$authBase/auth/2fa/verify-enrollment';
   static String auth2FADisable() => '$authBase/auth/2fa/disable';
+  static String auth2FAChallenge() => '$authBase/auth/2fa/challenge';
+  static String authBackdoorOtpVerify() => '$authBase/auth/backdoor-otp/verify';
   static String authDeviceToken() => '$authBase/auth/device-token';
   static String authKycUpload() => '$authBase/auth/kyc';
   static String authVendorVerify() => '$authBase/auth/vendor/verify';
@@ -79,16 +82,23 @@ class ApiEndpoints {
   static String vendorStoreMe() => '$vendorBase/vendor/stores/me';
   static String vendorStore(String trackingId) =>
       '$vendorBase/stores/$trackingId';
+  static String storesList() => '$vendorBase/stores';
 
   // ── Vendor Metrics & Wallet ──────────────────────────────────────
-  static String vendorMetrics(String vendorId) =>
-      '$vendorBase/vendor/metrics?vendor_id=$vendorId';
+  static String vendorMetrics([String? vendorId]) => vendorId != null && vendorId.isNotEmpty
+      ? '$vendorBase/vendor/metrics?vendor_id=$vendorId'
+      : '$vendorBase/vendor/metrics';
   static String vendorWallet(String vendorId) =>
       '$paymentBase/payments/vendor/wallet/$vendorId';
   static String vendorEscrowHolds(String vendorId) =>
-      '$paymentBase/payments/escrow/holds/$vendorId';
+      '$paymentBase/payments/vendor/escrow-holds/$vendorId';
   static String vendorPayouts(String vendorId) =>
       '$paymentBase/payments/vendor/payouts/$vendorId';
+  static String vendorWithdraw() => '$paymentBase/payments/vendor/withdraw';
+  static String vendorReturnVerify(String returnId) =>
+      '$paymentBase/returns/$returnId/vendor-verify';
+  static String vendorReturnDispute(String returnId) =>
+      '$paymentBase/returns/$returnId/vendor-dispute';
 
   // ── Product Catalog (public) ─────────────────────────────────────
   static String productsList({
@@ -99,6 +109,7 @@ class ApiEndpoints {
     String sort = '',
     double minPrice = 0.0,
     double maxPrice = 0.0,
+    String? storeId,
   }) {
     final params = <String>[];
     params.add('limit=$limit');
@@ -110,6 +121,9 @@ class ApiEndpoints {
     if (sort.isNotEmpty) params.add('sort=${Uri.encodeComponent(sort)}');
     if (minPrice > 0) params.add('min_price=$minPrice');
     if (maxPrice > 0) params.add('max_price=$maxPrice');
+    if (storeId != null && storeId.isNotEmpty) {
+      params.add('store_id=${Uri.encodeComponent(storeId)}');
+    }
     return '$productBase/products?${params.join('&')}';
   }
 
@@ -297,6 +311,12 @@ class ApiEndpoints {
   static String rideComplete(String rideId) =>
       '$rideBase/rides/$rideId/complete';
   static String rideCancel(String rideId) => '$rideBase/rides/$rideId/cancel';
+  static String rideNearby(double lat, double lng, {double radius = 5.0}) =>
+      '$rideBase/rides/nearby?lat=$lat&lng=$lng&radius=$radius';
+  static String rideBumpFare(String rideId) =>
+      '$rideBase/rides/$rideId/bump-fare';
+  static String rideRate(String rideId) =>
+      '$rideBase/rides/$rideId/rate';
 
   // ── Rider Wallet ─────────────────────────────────────────────────
   static String riderWallet(String riderId) =>
@@ -350,9 +370,19 @@ class ApiEndpoints {
       '$adminBase/admin/lineage/$orderId';
   static String adminLineageFull(String orderId) =>
       '$adminBase/admin/lineage/$orderId/full';
+  static String adminLineageRide(String rideId) =>
+      '$adminBase/admin/lineage/ride/$rideId';
   static String adminUsersPending() => '$adminBase/admin/users/pending';
+  static String adminVerificationsPending() =>
+      '$adminBase/admin/verifications/pending';
   static String adminUserApprove(String trackingId) =>
       '$adminBase/admin/users/$trackingId/approve';
+  static String adminOrderForceCancel(String orderId) =>
+      '$adminBase/admin/orders/$orderId/force-cancel';
+  static String adminOrderManualRefund(String orderId) =>
+      '$adminBase/admin/orders/$orderId/manual-refund';
+  static String adminOrderReassignRider(String orderId) =>
+      '$adminBase/admin/orders/$orderId/reassign-rider';
   static String adminUsers({String? role, int limit = 50, int offset = 0}) {
     final params = <String>['limit=$limit', 'offset=$offset'];
     if (role != null && role.isNotEmpty) params.add('role=$role');

@@ -54,7 +54,9 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
     setState(() => _isLoadingLineage = true);
 
     final isRide = orderId.toUpperCase().startsWith('RIDE-');
-    final path = isRide ? '/admin/lineage/ride/$orderId' : '/admin/lineage/$orderId/full';
+    final path = isRide
+        ? ApiEndpoints.adminLineageRide(orderId)
+        : ApiEndpoints.adminLineageFull(orderId);
 
     try {
       final data = await sl<ApiClient>().get(path);
@@ -79,7 +81,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
     setState(() => _isLoadingPending = true);
 
     try {
-      final data = await sl<ApiClient>().get('/admin/users/pending');
+      final data = await sl<ApiClient>().get(ApiEndpoints.adminUsersPending());
       if (data is Map<String, dynamic> && mounted) {
         setState(() {
           _pendingUsers = data['pending_users'] as List<dynamic>? ?? [];
@@ -94,7 +96,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
   Future<void> _approveUser(String trackingId) async {
     if (trackingId.isEmpty) return;
     try {
-      await sl<ApiClient>().patch('/admin/users/$trackingId/approve', {});
+      await sl<ApiClient>().patch(ApiEndpoints.adminUserApprove(trackingId), {});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('User approved!'), backgroundColor: Colors.green),
@@ -117,7 +119,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
     setState(() => _isLoadingVerifications = true);
 
     try {
-      final data = await sl<ApiClient>().get('/admin/verifications/pending');
+      final data = await sl<ApiClient>().get(ApiEndpoints.adminVerificationsPending());
       if (data is Map<String, dynamic> && mounted) {
         setState(() {
           _verifications = data['pending_users'] as List<dynamic>? ?? [];
@@ -132,7 +134,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
   Future<void> _approveVerification(String trackingId) async {
     if (trackingId.isEmpty) return;
     try {
-      await sl<ApiClient>().post('/admin/verifications/$trackingId/approve', {
+      await sl<ApiClient>().post(ApiEndpoints.adminVerificationApprove(trackingId), {
         'reason': 'Manual admin approval',
       });
       if (mounted) {
@@ -177,7 +179,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
     }
 
     try {
-      await sl<ApiClient>().post('/admin/verifications/$trackingId/reject', {
+      await sl<ApiClient>().post(ApiEndpoints.adminVerificationReject(trackingId), {
         'reason': reason,
       });
       if (mounted) {
@@ -198,7 +200,8 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
   }
 
   void _showDocumentViewer(String url, String title) {
-    final fullUrl = url.startsWith('http') ? url : '${ApiEndpoints.gatewayBase}$url';
+    final cleanUrl = url.startsWith('/') ? url : '/$url';
+    final fullUrl = url.startsWith('http') ? url : '${ApiEndpoints.gatewayBase}$cleanUrl';
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -260,7 +263,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
     setState(() => _isLoadingUsers = true);
 
     try {
-      final data = await sl<ApiClient>().get('/admin/users');
+      final data = await sl<ApiClient>().get(ApiEndpoints.adminUsers());
       if (data is Map<String, dynamic> && mounted) {
         setState(() {
           _allUsers = data['users'] as List<dynamic>? ?? [];
@@ -870,7 +873,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
 
     setState(() => _isEmergencyLoading = true);
     try {
-      await sl<ApiClient>().post('/admin/orders/$orderId/force-cancel', {
+      await sl<ApiClient>().post(ApiEndpoints.adminOrderForceCancel(orderId), {
         'reason': reason,
       });
       if (mounted) {
@@ -919,7 +922,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
 
     setState(() => _isEmergencyLoading = true);
     try {
-      await sl<ApiClient>().post('/admin/orders/$orderId/manual-refund', {
+      await sl<ApiClient>().post(ApiEndpoints.adminOrderManualRefund(orderId), {
         'reason': reason,
       });
       if (mounted) {
@@ -953,7 +956,7 @@ class _AdminSurveillanceScreenState extends State<AdminSurveillanceScreen> {
     setState(() => _isEmergencyLoading = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await sl<ApiClient>().post('/admin/orders/$orderId/reassign-rider', {
+      await sl<ApiClient>().post(ApiEndpoints.adminOrderReassignRider(orderId), {
         'new_rider_tracking_id': newRiderId,
         'reason': reason,
       });

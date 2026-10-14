@@ -54,17 +54,27 @@ class PayfastService {
     this.securedKey = defaultSecuredKey,
     this.merchantName = defaultMerchantName,
     this.isUAT = defaultIsUAT,
-    this.successUrl = defaultSuccessUrl,
-    this.failureUrl = defaultFailureUrl,
+    String? successUrl,
+    String? failureUrl,
     String? checkoutUrl,
-  }) : checkoutUrl = checkoutUrl ?? ApiEndpoints.payfastIPN();
+  })  : successUrl = successUrl ?? defaultSuccessUrl,
+        failureUrl = failureUrl ?? defaultFailureUrl,
+        checkoutUrl = checkoutUrl ?? ApiEndpoints.payfastIPN();
 
-  static const String defaultMerchantId = '102';
-  static const String defaultSecuredKey = 'zWHjBp2AlttNu1sK';
-  static const String defaultMerchantName = 'OMNIGO';
-  static const bool defaultIsUAT = true;
-  static const String defaultSuccessUrl = 'https://omnigo.com.pk/payment/success';
-  static const String defaultFailureUrl = 'https://omnigo.com.pk/payment/failure';
+  static const String defaultMerchantId =
+      String.fromEnvironment('PAYFAST_MERCHANT_ID', defaultValue: '102');
+  static const String defaultSecuredKey =
+      String.fromEnvironment('PAYFAST_SECURED_KEY', defaultValue: 'zWHjBp2AlttNu1sK');
+  static const String defaultMerchantName =
+      String.fromEnvironment('PAYFAST_MERCHANT_NAME', defaultValue: 'OMNIGO');
+  static const bool defaultIsUAT =
+      bool.fromEnvironment('PAYFAST_IS_UAT', defaultValue: true);
+  static String get defaultSuccessUrl =>
+      const String.fromEnvironment('PAYFAST_SUCCESS_URL',
+          defaultValue: 'https://omnigo-app-4-production.up.railway.app/payment/success');
+  static String get defaultFailureUrl =>
+      const String.fromEnvironment('PAYFAST_FAILURE_URL',
+          defaultValue: 'https://omnigo-app-4-production.up.railway.app/payment/failure');
 
   final String merchantId;
   final String securedKey;

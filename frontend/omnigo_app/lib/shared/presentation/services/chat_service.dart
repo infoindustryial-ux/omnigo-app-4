@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../../../core/di/service_locator.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/network/websocket_client.dart';
@@ -193,12 +194,12 @@ class ChatService {
 
   /// Helper: GET via ApiClient (retries & auth handled internally).
   Future<dynamic> _get(String endpoint) async {
-    return ApiClient().get(endpoint);
+    return sl<ApiClient>().get(endpoint);
   }
 
   /// Helper: POST via ApiClient (retries & auth handled internally).
   Future<dynamic> _post(String endpoint, Map<String, dynamic> body) async {
-    return ApiClient().post(endpoint, body);
+    return sl<ApiClient>().post(endpoint, body);
   }
 
   /// Fetch the chat list (conversations) for the current user.
@@ -243,7 +244,7 @@ class ChatService {
 
   /// Mark every message in this thread addressed to me as read.
   Future<void> markRead(String orderId) async {
-    await ApiClient().put(
+    await sl<ApiClient>().put(
       '${ApiEndpoints.chatMessages}/$orderId/read',
       {},
     );
@@ -251,7 +252,7 @@ class ChatService {
 
   /// M1: Mark every message in this thread addressed to me as delivered.
   Future<void> markDelivered(String orderId) async {
-    await ApiClient().put(
+    await sl<ApiClient>().put(
       '${ApiEndpoints.chatMessages}/$orderId/delivered',
       {},
     );
@@ -261,7 +262,7 @@ class ChatService {
   /// chat button widget.
   Future<int> fetchUnreadCount() async {
     try {
-      final data = await ApiClient().get(ApiEndpoints.chatUnread)
+      final data = await sl<ApiClient>().get(ApiEndpoints.chatUnread)
           as Map<String, dynamic>;
       final n = (data['unread_count'] ?? 0) as int;
       _unreadController.add(n);

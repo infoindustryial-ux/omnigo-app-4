@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../../../core/di/service_locator.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/services/session_registry.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/presentation/screens/chat_room_screen.dart';
@@ -39,15 +41,15 @@ class _VendorChatSelectorScreenState extends State<VendorChatSelectorScreen> {
         return;
       }
 
-      final data = await ApiClient().get('/orders/customer/$customerId') as Map<String, dynamic>;
+      final dynamic data = await sl<ApiClient>().get(ApiEndpoints.customerOrders(customerId));
       List<dynamic> rawOrders = [];
-      if (data.containsKey('orders') && data['orders'] is List) {
+      if (data is List) {
+        rawOrders = data;
+      } else if (data is Map && data.containsKey('orders') && data['orders'] is List) {
         rawOrders = data['orders'] as List<dynamic>;
-      } else if (data is List) {
-        rawOrders = data as List<dynamic>;
       }
       setState(() {
-        _orders = rawOrders.cast<Map<String, dynamic>>();
+        _orders = rawOrders.whereType<Map<String, dynamic>>().toList();
         _isLoading = false;
       });
     } catch (e) {

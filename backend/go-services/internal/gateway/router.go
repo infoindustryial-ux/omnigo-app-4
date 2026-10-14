@@ -157,7 +157,7 @@ func New(opts Options) *Gateway {
 	add("/api/v1/geo", "ADMIN_SERVICE_URL", "http://127.0.0.1:9007")
 	add("/api/v1/admin", "ADMIN_SERVICE_URL", "http://127.0.0.1:9007")
 	add("/api/v1/delivery", "DELIVERY_SERVICE_URL", "http://127.0.0.1:9003")
-	add("/api/v1/ride", "RIDE_SERVICE_URL", "http://127.0.0.1:9004")
+	add("/api/v1/ride", "DELIVERY_SERVICE_URL", "http://127.0.0.1:9003")
 	add("/api/v1/rides", "RIDE_SERVICE_URL", "http://127.0.0.1:9004")
 	add("/api/v1/orders", "ORDER_SERVICE_URL", "http://127.0.0.1:9005")
 	add("/api/v1/returns", "PAYMENT_SERVICE_URL", "http://127.0.0.1:9006")

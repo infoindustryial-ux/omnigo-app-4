@@ -33,14 +33,10 @@ class _VendorWalletScreenState extends State<VendorWalletScreen> {
       final api = sl<ApiClient>();
 
       // Fetch wallet, escrow holds (vendor-scoped endpoint), and payouts in parallel.
-      // NOTE: We use the vendor-scoped endpoint /payments/vendor/escrow-holds/:vendor_id
-      // which is authenticated for the vendor themselves. The previous
-      // /payments/escrow/holds/:vendor_id endpoint was admin-only.
-      final paymentBase = ApiEndpoints.paymentBase;
       final results = await Future.wait([
-        api.get('$paymentBase/payments/vendor/wallet/${widget.vendorTrackingId}'),
-        api.get('$paymentBase/payments/vendor/escrow-holds/${widget.vendorTrackingId}'),
-        api.get('$paymentBase/payments/vendor/payouts/${widget.vendorTrackingId}'),
+        api.get(ApiEndpoints.vendorWallet(widget.vendorTrackingId)),
+        api.get(ApiEndpoints.vendorEscrowHolds(widget.vendorTrackingId)),
+        api.get(ApiEndpoints.vendorPayouts(widget.vendorTrackingId)),
       ]);
 
       if (mounted) {
@@ -73,7 +69,7 @@ class _VendorWalletScreenState extends State<VendorWalletScreen> {
     try {
       final api = sl<ApiClient>();
       await api.post(
-        '${ApiEndpoints.paymentBase}/payments/vendor/withdraw',
+        ApiEndpoints.vendorWithdraw(),
         {
           'vendor_tracking_id': widget.vendorTrackingId,
           'amount': amount,

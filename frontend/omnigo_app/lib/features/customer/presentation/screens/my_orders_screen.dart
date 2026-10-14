@@ -76,7 +76,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> with SingleTickerProvid
     });
 
     try {
-      final response = await sl<ApiClient>().get('/orders/customer/${widget.customerTrackingId}');
+      final response = await sl<ApiClient>().get(ApiEndpoints.customerOrders(widget.customerTrackingId));
       final List<dynamic> orders = response is List ? response : [];
       setState(() {
         if (reset) {
@@ -198,7 +198,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> with SingleTickerProvid
       if (items.isEmpty) {
         final orderId = order['order_tracking_id']?.toString() ?? '';
         if (orderId.isNotEmpty) {
-          final detail = await ApiClient().get(ApiEndpoints.orderDetail(orderId));
+          final detail = await sl<ApiClient>().get(ApiEndpoints.orderDetail(orderId));
           if (detail is Map<String, dynamic>) {
             items = (detail['items'] as List<dynamic>?) ??
                 (detail['products'] as List<dynamic>?) ??

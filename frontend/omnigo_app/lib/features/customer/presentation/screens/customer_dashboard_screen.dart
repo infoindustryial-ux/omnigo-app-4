@@ -797,7 +797,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           onPressed: () async {
                             Navigator.pop(context);
                             try {
-                              await sl<ApiClient>().post('/rides/$rideId/rate', {
+                              await sl<ApiClient>().post(ApiEndpoints.rideRate(rideId), {
                                 'rating': selectedRating,
                                 'comment': commentController.text.trim(),
                                 'tip_amount': selectedTip,
@@ -1100,7 +1100,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     });
 
     try {
-      final response = await sl<ApiClient>().post('/ride/estimate', {
+      final response = await sl<ApiClient>().post(ApiEndpoints.rideEstimate(), {
         'pickup_lat': _ridePickupLatLng!.latitude,
         'pickup_lng': _ridePickupLatLng!.longitude,
         'dropoff_lat': _rideDropoffLatLng!.latitude,
@@ -1163,7 +1163,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     ),);
 
     try {
-      final response = await sl<ApiClient>().post('/rides/', {
+      final response = await sl<ApiClient>().post(ApiEndpoints.rideCreate(), {
         'customer_tracking_id': widget.trackingId,
         'vehicle_type': vehicleType,
         'pickup_lat': _ridePickupLatLng!.latitude,
@@ -1244,7 +1244,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   Future<void> _fetchNearbyDriversForMap(double lat, double lng) async {
     try {
-      final resp = await sl<ApiClient>().get('/rides/nearby?lat=$lat&lng=$lng&radius=5.0');
+      final resp = await sl<ApiClient>().get(ApiEndpoints.rideNearby(lat, lng));
       if (resp is Map<String, dynamic> && resp['riders'] is List) {
         final List<dynamic> riders = resp['riders'] as List<dynamic>;
         if (!mounted) return;
@@ -1274,7 +1274,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   Future<void> _bumpFare(double increaseAmount) async {
     if (_activeRideTrackingId == null) return;
     try {
-      final resp = await sl<ApiClient>().post('/rides/$_activeRideTrackingId/bump-fare', {
+      final resp = await sl<ApiClient>().post(ApiEndpoints.rideBumpFare(_activeRideTrackingId!), {
         'increase_amount': increaseAmount,
       });
       final newFare = (resp is Map && resp['fare_amount'] is num)
@@ -1306,7 +1306,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     if (_activeRideTrackingId == null) return;
     final bidId = bid['bid_id'];
     try {
-      await sl<ApiClient>().post('/rides/$_activeRideTrackingId/accept-bid', {
+      await sl<ApiClient>().post(ApiEndpoints.rideAcceptBid(_activeRideTrackingId!), {
         'bid_id': bidId,
       });
       _radarSearchTimer?.cancel();
@@ -1337,7 +1337,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   Future<void> _cancelRide() async {
     if (_activeRideTrackingId != null) {
       try {
-        await sl<ApiClient>().post('/rides/$_activeRideTrackingId/cancel', {
+        await sl<ApiClient>().post(ApiEndpoints.rideCancel(_activeRideTrackingId!), {
           'actor_role': 'customer',
         });
       } catch (_) {}
@@ -1797,7 +1797,7 @@ class CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
     try {
       final response =
-          await sl<ApiClient>().get('/orders/customer/${widget.trackingId}');
+          await sl<ApiClient>().get(ApiEndpoints.customerOrders(widget.trackingId));
       if (mounted) {
         // #53: Verify response is List before casting
         final List<dynamic> orders = response is List<dynamic> ? response : <dynamic>[];

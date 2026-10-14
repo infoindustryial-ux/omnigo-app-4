@@ -113,7 +113,7 @@ class VendorDashboardScreenState extends State<VendorDashboardScreen> {
 
   Future<void> _fetchVendorRating() async {
     try {
-      final data = await sl<ApiClient>().get('/ratings/${widget.trackingId}') as Map<String, dynamic>;
+      final data = await sl<ApiClient>().get(ApiEndpoints.ratingForUser(widget.trackingId)) as Map<String, dynamic>;
       if (mounted) {
         setState(() {
           _avgRating = (data['average_rating'] as num?)?.toDouble() ?? 0.0;
@@ -130,7 +130,7 @@ class VendorDashboardScreenState extends State<VendorDashboardScreen> {
     setState(() => _isLoadingMetrics = true);
 
     try {
-      final data = await sl<ApiClient>().get('/vendor/metrics');
+      final data = await sl<ApiClient>().get(ApiEndpoints.vendorMetrics(widget.trackingId));
       if (data != null && data is Map<String, dynamic>) {
         if (mounted) {
           setState(() {
@@ -166,7 +166,7 @@ class VendorDashboardScreenState extends State<VendorDashboardScreen> {
     });
 
     try {
-      final response = await sl<ApiClient>().get('/orders/vendor/${widget.trackingId}');
+      final response = await sl<ApiClient>().get(ApiEndpoints.vendorOrders(widget.trackingId));
       if (mounted) {
         setState(() {
           _orders = response as List<dynamic>;
@@ -188,7 +188,7 @@ class VendorDashboardScreenState extends State<VendorDashboardScreen> {
   Future<void> _acceptOrder(String orderTrackingId) async {
     await _stopOrderAlert();
     try {
-      await sl<ApiClient>().patch('/orders/$orderTrackingId/status', {
+      await sl<ApiClient>().patch(ApiEndpoints.updateOrderStatus(orderTrackingId), {
         'status': 'accepted',
       });
       if (!mounted) return;
@@ -206,7 +206,7 @@ class VendorDashboardScreenState extends State<VendorDashboardScreen> {
 
   Future<void> _broadcastGig(String orderTrackingId) async {
     try {
-      await sl<ApiClient>().patch('/orders/$orderTrackingId/status', {
+      await sl<ApiClient>().patch(ApiEndpoints.updateOrderStatus(orderTrackingId), {
         'status': 'shipped',
       });
       if (!mounted) return;
@@ -258,7 +258,7 @@ class VendorDashboardScreenState extends State<VendorDashboardScreen> {
       // POST the handover. The vendor gets a one-tap audit record; the
       // rider receives an in-app + push notification that the order is
       // ready for pickup.
-      await sl<ApiClient>().post('/orders/handover', {
+      await sl<ApiClient>().post(ApiEndpoints.orderHandover(), {
         'order_tracking_id': orderTrackingId,
         'photo_url': photoUrl,
         'notes': '',
@@ -791,7 +791,7 @@ class _VendorProfileTabState extends State<VendorProfileTab> {
 
   Future<void> _fetchStoreDetails() async {
     try {
-      final data = await sl<ApiClient>().get('/vendor/stores/me') as Map<String, dynamic>;
+      final data = await sl<ApiClient>().get(ApiEndpoints.vendorStoreMe()) as Map<String, dynamic>;
       if (mounted) {
         setState(() {
           _storeData = data;
@@ -866,7 +866,7 @@ class _VendorProfileTabState extends State<VendorProfileTab> {
 
     try {
       await sl<ApiClient>().patch(
-        '/vendor/stores/me',
+        ApiEndpoints.vendorStoreMe(),
         {'latitude': newLat, 'longitude': newLng},
       );
       if (mounted) {
@@ -939,7 +939,7 @@ class _VendorProfileTabState extends State<VendorProfileTab> {
       if (_licenseFile != null) files.add(await http.MultipartFile.fromPath('license_cert', _licenseFile!.path));
 
       final data = await sl<ApiClient>().multipartPut(
-        '${ApiEndpoints.authBase}/auth/vendor/verify',
+        ApiEndpoints.authVendorVerify(),
         fields,
         files,
       );

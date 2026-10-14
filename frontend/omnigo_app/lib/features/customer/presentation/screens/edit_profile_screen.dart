@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../../core/di/service_locator.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/services/session_registry.dart';
 
 /// EditProfileScreen allows the authenticated customer to update their
@@ -73,7 +75,7 @@ class EditProfileScreenState extends State<EditProfileScreen> {
         return;
       }
 
-      final data = await ApiClient().patch('/auth/profile', body);
+      final data = await sl<ApiClient>().patch(ApiEndpoints.authProfile(), body);
 
       if (!mounted) return;
 

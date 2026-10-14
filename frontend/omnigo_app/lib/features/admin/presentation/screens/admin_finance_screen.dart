@@ -630,7 +630,7 @@ class _ApiKeysPanelState extends State<_ApiKeysPanel> {
   Future<void> _refreshExisting() async {
     setState(() => _loadingExisting = true);
     try {
-      final data = await sl<ApiClient>().get('/admin/finance/api-keys');
+      final data = await sl<ApiClient>().get(ApiEndpoints.adminFinanceApiKeys());
       if (data is Map<String, dynamic>) {
         _existingKeys = (data['api_keys'] as List<dynamic>?) ?? [];
       }
@@ -650,7 +650,7 @@ class _ApiKeysPanelState extends State<_ApiKeysPanel> {
     }
     setState(() => _saving = true);
     try {
-      final body = await sl<ApiClient>().post('/admin/finance/api-keys', {
+      final body = await sl<ApiClient>().post(ApiEndpoints.adminFinanceApiKeySet(), {
         'provider': _selectedProvider,
         'key_name': _selectedKeyName,
         'value': value,
@@ -703,7 +703,7 @@ class _ApiKeysPanelState extends State<_ApiKeysPanel> {
     if (confirm != true) return;
 
     try {
-      await sl<ApiClient>().delete('/admin/finance/api-keys/$provider/$keyName');
+      await sl<ApiClient>().delete(ApiEndpoints.adminFinanceApiKeyDelete(provider, keyName));
       _toast('Deleted', background: Colors.orange);
       await _refreshExisting();
     } catch (e) {

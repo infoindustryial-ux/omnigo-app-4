@@ -68,7 +68,7 @@ class _VendorReturnVerificationScreenState extends State<VendorReturnVerificatio
         photoUrl = await _uploadPhoto(_verificationPhoto!);
       }
 
-      final returnId = widget.returnRequest['id'] ?? '';
+      final String returnId = (widget.returnRequest['id'] ?? '').toString();
       final body = {
         'verified': verified,
         'photo_url': photoUrl ?? '',
@@ -76,7 +76,9 @@ class _VendorReturnVerificationScreenState extends State<VendorReturnVerificatio
       };
 
       await sl<ApiClient>().post(
-        '/api/v1/returns/$returnId/vendor-verify',
+        verified
+            ? ApiEndpoints.vendorReturnVerify(returnId)
+            : ApiEndpoints.vendorReturnDispute(returnId),
         body,
       );
 

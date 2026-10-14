@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import '../network/api_client.dart';
+import '../network/api_endpoints.dart';
 
 class SessionRegistry {
   SessionRegistry._privateConstructor();
@@ -168,7 +169,7 @@ class SessionRegistry {
     }
     try {
       if (_token != null && _refreshToken != null) {
-        await ApiClient().post('/auth/logout', {'refresh_token': _refreshToken});
+        await ApiClient().post(ApiEndpoints.authLogout(), {'refresh_token': _refreshToken});
       }
     } catch (_) {
       // Non-fatal — local session must still be cleared even if backend call fails
@@ -195,7 +196,7 @@ class SessionRegistry {
         }
       }
 
-      await ApiClient().post('/api/v1/auth/device-token', {
+      await ApiClient().post(ApiEndpoints.authDeviceToken(), {
         'fcm_token': fcmToken,
         'platform': platform,
       });

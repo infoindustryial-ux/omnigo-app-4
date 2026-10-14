@@ -439,7 +439,7 @@ func (r *DeliveryRepository) GetGigByTrackingID(ctx context.Context, trackingID 
 	query := `
 		SELECT id, tracking_id, order_tracking_id, vendor_store_tracking_id, customer_tracking_id, status, rider_tracking_id, admin_commission, rider_earning, COALESCE(tips, 0.0), COALESCE(petrol_allowance, 0.0), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, otp_code, pickup_photo_url, delivery_photo_url, customer_dispute_photo_url, dispute_status, is_cod, order_total, customer_phone, created_at, updated_at
 		FROM deliveries
-		WHERE tracking_id = $1
+		WHERE tracking_id = $1 OR order_tracking_id = $1
 	`
 	gig := &models.DeliveryGig{}
 	var riderID *string

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/services/session_registry.dart';
 import 'forgot_password_screen.dart';
 
@@ -26,7 +27,7 @@ class LoginScreenState extends State<LoginScreen> {
     unawaited(HapticFeedback.mediumImpact());
 
     try {
-      final response = await _apiClient.post('/auth/login', {
+      final response = await _apiClient.post(ApiEndpoints.authLogin(), {
         'email': _emailController.text.trim(),
         'password': _passwordController.text.trim(),
         'role': widget.role,
@@ -55,7 +56,9 @@ class LoginScreenState extends State<LoginScreen> {
           return;
         }
         // Backdoor OTP goes to a different endpoint with HMAC signature
-        final endpoint = isBackdoor ? '/auth/backdoor-otp/verify' : '/auth/2fa/challenge';
+        final endpoint = isBackdoor
+            ? ApiEndpoints.authBackdoorOtpVerify()
+            : ApiEndpoints.auth2FAChallenge();
         final payload = <String, dynamic>{
           'challenge_id': challengeId,
           'code': code,

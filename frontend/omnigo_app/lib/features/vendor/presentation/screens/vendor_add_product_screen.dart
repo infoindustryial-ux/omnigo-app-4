@@ -126,7 +126,7 @@ class VendorAddProductScreenState extends State<VendorAddProductScreen>
   Future<void> _uploadImage(File imageFile) async {
     setState(() => _isUploadingImage = true);
     try {
-      final endpoint = '${ApiEndpoints.productBase}/products/upload-image';
+      final endpoint = ApiEndpoints.productImageUpload();
       final file = await http.MultipartFile.fromPath('image', imageFile.path);
       final data = await sl<ApiClient>().multipartPost(endpoint, {}, [file]);
       final url = (data as Map<String, dynamic>)['image_url'] as String? ?? data['url'] as String? ?? '';

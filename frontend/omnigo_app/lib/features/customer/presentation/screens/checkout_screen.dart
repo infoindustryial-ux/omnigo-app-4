@@ -1353,7 +1353,7 @@ Future<bool> _waitForPaymentConfirmation(
   for (var i = 0; i < 15; i++) {
     await Future<void>.delayed(const Duration(seconds: 3));
     try {
-      final resp = await apiClient.get('/orders/$orderId');
+      final resp = await apiClient.get(ApiEndpoints.orderDetail(orderId));
       if (resp is Map<String, dynamic>) {
         final orderStatus = resp['status']?.toString().toLowerCase() ?? '';
         final paymentStatus = resp['payment_status']?.toString().toLowerCase() ?? '';

@@ -485,11 +485,15 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
       // the gateway forwards the packet to the linked customer session.
       if (_wsClient.state == WSConnectionState.connected) {
         _wsClient.sendMessage(jsonEncode({
+          "tracking_id": widget.trackingId,
           "customer_id": "",
-          "order_id": _broadcastedGig != null ? _broadcastedGig!['order_tracking_id'] : "",
-          "vector_clock": DateTime.now().millisecondsSinceEpoch,
-          "lat": position.latitude,
-          "lng": position.longitude,
+          "order_id": _broadcastedGig != null ? (_broadcastedGig!['order_tracking_id']?.toString() ?? "") : "",
+          "timestamp_ms": DateTime.now().millisecondsSinceEpoch,
+          "latitude": position.latitude,
+          "longitude": position.longitude,
+          "speed_mps": position.speed,
+          "bearing_degrees": position.heading < 0 ? (position.heading % 360.0 + 360.0) % 360.0 : position.heading % 360.0,
+          "status": "online",
         }),);
       }
     });
@@ -1078,7 +1082,7 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
                         "rider_tracking_id": widget.trackingId,
                         "final_fare": fare,
                         "distance_meters": distanceMeters,
-                        "duration_seconds": durationSecs,
+                        "duration_seconds": durationSecs.round(),
                         "payment_method": paymentMethod,
                       });
                       await OfflineGigStorage.clearActiveGig();
@@ -1171,13 +1175,16 @@ class RiderMapScreenState extends State<RiderMapScreen> with WidgetsBindingObser
               backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
               title: const Text('Gig Completed', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.blackAccent)),
-              content: const Column(
+              content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Success: Delivery completed.'),
-                  SizedBox(height: 10),
-                  Text('Chain complete: CUST-xxxx ➔ STOR-xxxx ➔ RIDR-xxxx', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                  const Text('Success: Delivery completed.'),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Chain complete: ${_broadcastedGig?['customer_tracking_id'] ?? 'CUST'} ➔ ${_broadcastedGig?['vendor_store_tracking_id'] ?? 'STOR'} ➔ ${widget.trackingId}',
+                    style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                  ),
                 ],
               ),
               actions: [

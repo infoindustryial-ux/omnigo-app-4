@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:omnigo_app/core/network/api_client.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -103,7 +101,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
     setState(() => _isLoadingStore = true);
     try {
-      final result = await ApiClient().get('/stores/$storeId');
+      final result = await sl<ApiClient>().get(ApiEndpoints.vendorStore(storeId));
       if (mounted) {
         setState(() {
           _storeInfo = result as Map<String, dynamic>;
@@ -121,7 +119,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
     setState(() => _isLoadingRecommendations = true);
     try {
-      final result = await ApiClient().get('/products/$prodId/recommendations');
+      final result = await sl<ApiClient>().get(ApiEndpoints.productRecommendations(prodId));
       if (mounted) {
         final data = result as List<dynamic>;
         setState(() {
@@ -141,15 +139,11 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
     if (prodId.isEmpty) return;
 
     try {
-      final response = await http.get(
-        Uri.parse(ApiEndpoints.reviewSummary(prodId)),
-      ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200 && mounted) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final response = await sl<ApiClient>().get(ApiEndpoints.reviewSummary(prodId));
+      if (response is Map<String, dynamic> && mounted) {
         setState(() {
-          _avgRating = (data['average_rating'] as num?)?.toDouble() ?? 0.0;
-          _totalReviews = (data['total_reviews'] as num?)?.toInt() ?? 0;
+          _avgRating = (response['average_rating'] as num?)?.toDouble() ?? 0.0;
+          _totalReviews = (response['total_reviews'] as num?)?.toInt() ?? 0;
         });
       }
     } catch (e) {
@@ -164,13 +158,10 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
     setState(() => _isLoadingReviews = true);
 
     try {
-      final response = await http.get(
-        Uri.parse(ApiEndpoints.reviewList(prodId)),
-      ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200 && mounted) {
+      final response = await sl<ApiClient>().get(ApiEndpoints.reviewList(prodId));
+      if (response is List<dynamic> && mounted) {
         setState(() {
-          _reviews = jsonDecode(response.body) as List<dynamic>;
+          _reviews = response;
           _isLoadingReviews = false;
         });
       } else if (mounted) {
@@ -189,7 +180,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
       final prefs = await SharedPreferences.getInstance();
       final customerTrackingId = prefs.getString('tracking_id') ?? '';
 
-      await ApiClient().post('/reviews/', {
+      await sl<ApiClient>().post(ApiEndpoints.reviewCreate(), {
         'product_tracking_id': prodId,
         'customer_tracking_id': customerTrackingId,
         'rating': rating,
@@ -390,7 +381,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
     final storeId = widget.product.storeTrackingId;
     if (storeId.isEmpty) return;
     try {
-      final resp = await ApiClient().post(
+      final resp = await sl<ApiClient>().post(
         ApiEndpoints.deliveryEstimateFee(),
         {
           'vendor_store_tracking_id': storeId,
@@ -417,7 +408,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
   // C-4 FIX: Cancel order on payment failure to release stock
   Future<void> _cancelOrderOnFailure(String orderId, String reason) async {
     try {
-      await ApiClient().post('/orders/$orderId/cancel', {'reason': reason});
+      await sl<ApiClient>().post(ApiEndpoints.customerCancelOrder(orderId), {'reason': reason});
     } catch (_) {}
   }
 
@@ -487,7 +478,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
       }];
 
       // Step 1: Place the order (ApiClient throws on error)
-      final orderData = await ApiClient().post(ApiEndpoints.orderCheckout(), {
+      final orderData = await sl<ApiClient>().post(ApiEndpoints.orderCheckout(), {
         'user_tracking_id': widget.userTrackingId,
         'vendor_store_tracking_id': vendorStoreId,
         'items': reqItems,
@@ -513,7 +504,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
       // ── Step 2: Branch on payment method using the REAL order id.
       if (paymentChoice == 'card') {
         try {
-          final checkoutData = await ApiClient().post(ApiEndpoints.stripeCheckout(), {
+          final checkoutData = await sl<ApiClient>().post(ApiEndpoints.stripeCheckout(), {
             'gateway': 'stripe',
             'customer_id': widget.userTrackingId,
             'store_id': vendorStoreId,
@@ -591,7 +582,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
         }
       } else if (paymentChoice == 'wallet') {
         try {
-          final wcData = await ApiClient().post(ApiEndpoints.stripeCheckout(), {
+          final wcData = await sl<ApiClient>().post(ApiEndpoints.stripeCheckout(), {
             'gateway': 'wallet',
             'customer_id': widget.userTrackingId,
             'order_id': realOrderTrackingId,
@@ -638,7 +629,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
         }
       } else if (paymentChoice == 'jazzcash' || paymentChoice == 'easypaisa') {
         try {
-          final walletData = await ApiClient().post(ApiEndpoints.walletCharge(), {
+          final walletData = await sl<ApiClient>().post(ApiEndpoints.walletCharge(), {
             'customer_id': widget.userTrackingId,
             'store_id': vendorStoreId,
             'gateway': paymentChoice,
@@ -712,7 +703,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
           // Enterprise fail-safe: check if order was actually marked paid via IPN
           bool isOrderPaid = false;
           try {
-            final orderCheck = await ApiClient().get('/orders/$realOrderTrackingId') as Map<String, dynamic>;
+            final orderCheck = await sl<ApiClient>().get(ApiEndpoints.orderDetail(realOrderTrackingId)) as Map<String, dynamic>;
             final pStatus = (orderCheck['payment_status'] ?? orderCheck['status'])?.toString().toLowerCase();
             if (pStatus == 'paid' || pStatus == 'confirmed' || pStatus == 'settlement_pending') {
               isOrderPaid = true;
@@ -761,7 +752,7 @@ class ProductDetailsScreenState extends State<ProductDetailsScreen> {
         for (var i = 0; i < 15; i++) {
           await Future<void>.delayed(const Duration(seconds: 3));
           try {
-            final resp = await ApiClient().get('/orders/$realOrderTrackingId');
+            final resp = await sl<ApiClient>().get(ApiEndpoints.orderDetail(realOrderTrackingId));
             if (resp is Map<String, dynamic>) {
               final orderStatus = resp['status']?.toString().toLowerCase() ?? '';
               final paymentStatus = resp['payment_status']?.toString().toLowerCase() ?? '';
