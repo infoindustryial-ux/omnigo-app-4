@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,7 +41,14 @@ func RateLimit(rdb redis.UniversalClient, limit int, window time.Duration) gin.H
 		// Prefer verified tracking ID from authenticated JWT context, fallback to client IP
 		keyIdentifier := GetTrackingID(c)
 		if keyIdentifier == "" {
-			keyIdentifier = c.ClientIP()
+			if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+				parts := strings.Split(xff, ",")
+				keyIdentifier = strings.TrimSpace(parts[0])
+			} else if xrip := c.GetHeader("X-Real-IP"); xrip != "" {
+				keyIdentifier = strings.TrimSpace(xrip)
+			} else {
+				keyIdentifier = c.ClientIP()
+			}
 		}
 		key := fmt.Sprintf("ratelimit:%s", keyIdentifier)
 
