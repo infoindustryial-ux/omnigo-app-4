@@ -17,7 +17,7 @@ import (
 // ── Configurable origin allowlist ───────────────────────────────────────────
 //
 // Production deployments should set WS_ALLOWED_ORIGINS to a comma-separated
-// list of origins, e.g. "https://omnigo-app-production.up.railway.app,
+// list of origins, e.g. "https://omnigo-app-4-production.up.railway.app,
 // https://omnigo.app". The previous hardcoded list made staging / custom
 // domains silently fail. Empty env → "reflect Origin" (dev only), so
 // local Flutter or curl still works.
@@ -48,7 +48,7 @@ func loadAllowedOrigins() {
 		if env != "development" && env != "" {
 			panic("FATAL: WS_ALLOWED_ORIGINS must be set in production (APP_ENV=" + env + "). " +
 				"An open WebSocket origin policy is a security risk. " +
-				"Example: WS_ALLOWED_ORIGINS=https://omnigo-app-production.up.railway.app," +
+				"Example: WS_ALLOWED_ORIGINS=https://omnigo-app-4-production.up.railway.app," +
 				"https://store.omnigo.pk")
 		}
 		allowedOriginsMode.Store(modeReflect)

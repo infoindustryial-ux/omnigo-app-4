@@ -2,7 +2,7 @@
 export APP_ENV="production"
 export PORT="8001"
 export PUBLIC_BASE_URL="http://127.0.0.1:8001"
-export CORS_ALLOWED_ORIGINS="http://127.0.0.1:8001,https://omnigo-app-production.up.railway.app"
+export CORS_ALLOWED_ORIGINS="http://127.0.0.1:8001,https://omnigo-app-4-production.up.railway.app"
 export DATABASE_URL="postgresql://postgres.tzkjjewhnujdikkkxkmo:cTQcX259vKLCtzZj@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
 export DB_WRITER_DSN="postgresql://postgres.tzkjjewhnujdikkkxkmo:cTQcX259vKLCtzZj@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
 export DB_READER_DSN="postgresql://postgres.tzkjjewhnujdikkkxkmo:cTQcX259vKLCtzZj@aws-0-us-east-1.pooler.supabase.com:6543/postgres"

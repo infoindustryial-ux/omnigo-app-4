@@ -26,7 +26,7 @@ func CORS() gin.HandlerFunc {
 			// ponytail: fail-fast. A misconfigured prod CORS is worse than a down service —
 			// it leaks credentials. Upgrade path: read from a managed secrets store.
 			panic("FATAL: CORS_ALLOWED_ORIGINS must be set in production (APP_ENV=" + env + "). " +
-				"Example: CORS_ALLOWED_ORIGINS=https://omnigo-app-production.up.railway.app," +
+				"Example: CORS_ALLOWED_ORIGINS=https://omnigo-app-4-production.up.railway.app," +
 				"https://store.omnigo.pk")
 		}
 	}

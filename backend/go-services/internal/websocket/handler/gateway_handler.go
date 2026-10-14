@@ -39,7 +39,6 @@ var upgrader = websocket.Upgrader{
 		// allowed spoofed hosts like "http://localhost.evil.com".
 		allowedHosts := []string{
 			"omnigo-app-4-production.up.railway.app",
-			"omnigo-app-production.up.railway.app",
 			"omnigo.app",
 			"www.omnigo.app",
 			"localhost",

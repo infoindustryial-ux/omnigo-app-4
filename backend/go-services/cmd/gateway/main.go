@@ -2,7 +2,7 @@
 //
 // Flutter talks to exactly one URL:
 //
-//	https://omnigo-app-production.up.railway.app
+//	https://omnigo-app-4-production.up.railway.app
 //
 // This gateway is stateless and horizontally scalable. Run N replicas;
 // Railway (or K8s) load-balances across them. All session state lives in

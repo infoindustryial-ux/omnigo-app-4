@@ -5,7 +5,7 @@
 //
 // Design goals:
 //   - Stateless: safe to run N replicas behind Railway/K8s load balancer.
-//   - Single public URL: Flutter only knows https://omnigo-app-production.up.railway.app
+//   - Single public URL: Flutter only knows https://omnigo-app-4-production.up.railway.app
 //   - Internal services stay private; gateway is the only exposed port.
 //   - Health, readiness and liveness endpoints for auto-scaling.
 //   - Circuit breaker + retry per upstream to tolerate partial failures.
