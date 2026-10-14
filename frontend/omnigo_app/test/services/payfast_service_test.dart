@@ -1,5 +1,3 @@
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnigo_app/core/services/payfast_service.dart';
 
@@ -12,8 +10,8 @@ void main() {
       expect(service.securedKey, equals('zWHjBp2AlttNu1sK'));
       expect(service.merchantName, equals('OMNIGO'));
       expect(service.isUAT, isTrue);
-      expect(service.successUrl, equals('https://omnigo.com.pk/payment/success'));
-      expect(service.failureUrl, equals('https://omnigo.com.pk/payment/failure'));
+      expect(service.successUrl, equals('https://omnigo-app-4-production.up.railway.app/payment/success'));
+      expect(service.failureUrl, equals('https://omnigo-app-4-production.up.railway.app/payment/failure'));
       expect(service.checkoutUrl, contains('/payments/payfast/ipn'));
     });
 
@@ -52,17 +50,55 @@ void main() {
     });
 
     test('Validation hash matches PayFast official worked example', () {
-      const basketId = 'BAS-01';
-      const securedKey = 'jdnkaabcks';
-      const merchantId = '102';
-      const errCode = '000';
-
-      final raw = '$basketId|$securedKey|$merchantId|$errCode';
-      final hash = sha256.convert(utf8.encode(raw)).toString();
+      final hash = PayfastService.calculateValidationHash(
+        basketId: 'BAS-01',
+        securedKey: 'jdnkaabcks',
+        merchantId: '102',
+        errCode: '000',
+      );
 
       expect(
         hash,
         equals('e8192a7554dd699975adf39619c703a492392edf5e416a61e183866ecdf6a2a2'),
+      );
+
+      final isValid = PayfastService.verifyValidationHash(
+        basketId: 'BAS-01',
+        securedKey: 'jdnkaabcks',
+        merchantId: '102',
+        errCode: '000',
+        receivedHash: 'e8192a7554dd699975adf39619c703a492392edf5e416a61e183866ecdf6a2a2',
+      );
+      expect(isValid, isTrue);
+
+      final isInvalid = PayfastService.verifyValidationHash(
+        basketId: 'BAS-01',
+        securedKey: 'jdnkaabcks',
+        merchantId: '102',
+        errCode: '000',
+        receivedHash: 'tampered_hash_123',
+      );
+      expect(isInvalid, isFalse);
+    });
+
+    test('Validation hash with official test credentials', () {
+      final hash = PayfastService.calculateValidationHash(
+        basketId: 'OMNIGO-BASKET-001',
+        securedKey: 'zWHjBp2AlttNu1sK',
+        merchantId: '102',
+        errCode: '000',
+      );
+
+      expect(hash.length, equals(64)); // SHA256 hex length
+      expect(
+        PayfastService.verifyValidationHash(
+          basketId: 'OMNIGO-BASKET-001',
+          securedKey: 'zWHjBp2AlttNu1sK',
+          merchantId: '102',
+          errCode: '000',
+          receivedHash: hash,
+        ),
+        isTrue,
       );
     });
   });

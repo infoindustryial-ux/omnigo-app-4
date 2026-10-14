@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:payfast_flutter_sdk/payfast_flutter_sdk.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -70,11 +72,15 @@ class PayfastService {
   static const bool defaultIsUAT =
       bool.fromEnvironment('PAYFAST_IS_UAT', defaultValue: true);
   static String get defaultSuccessUrl =>
-      const String.fromEnvironment('PAYFAST_SUCCESS_URL',
-          defaultValue: 'https://omnigo-app-4-production.up.railway.app/payment/success');
+      const String.fromEnvironment(
+        'PAYFAST_SUCCESS_URL',
+        defaultValue: 'https://omnigo-app-4-production.up.railway.app/payment/success',
+      );
   static String get defaultFailureUrl =>
-      const String.fromEnvironment('PAYFAST_FAILURE_URL',
-          defaultValue: 'https://omnigo-app-4-production.up.railway.app/payment/failure');
+      const String.fromEnvironment(
+        'PAYFAST_FAILURE_URL',
+        defaultValue: 'https://omnigo-app-4-production.up.railway.app/payment/failure',
+      );
 
   final String merchantId;
   final String securedKey;
@@ -83,6 +89,38 @@ class PayfastService {
   final String successUrl;
   final String failureUrl;
   final String checkoutUrl;
+
+  /// Generates the validation hash per PayFast specification:
+  /// SHA256 of "basket_id|secured_key|merchant_id|payfast_err_code"
+  ///
+  /// Example:
+  /// BAS-01|jdnkaabcks|102|000 -> e8192a7554dd699975adf39619c703a492392edf5e416a61e183866ecdf6a2a2
+  static String calculateValidationHash({
+    required String basketId,
+    required String securedKey,
+    required String merchantId,
+    required String errCode,
+  }) {
+    final payload = '$basketId|$securedKey|$merchantId|$errCode';
+    return sha256.convert(utf8.encode(payload)).toString().toLowerCase();
+  }
+
+  /// Verifies a received hash from PayFast against the locally calculated hash.
+  static bool verifyValidationHash({
+    required String basketId,
+    required String securedKey,
+    required String merchantId,
+    required String errCode,
+    required String receivedHash,
+  }) {
+    final expected = calculateValidationHash(
+      basketId: basketId,
+      securedKey: securedKey,
+      merchantId: merchantId,
+      errCode: errCode,
+    );
+    return expected.toLowerCase() == receivedHash.trim().toLowerCase();
+  }
 
   /// Processes a payment through the PayFast Redirection SDK.
   ///
