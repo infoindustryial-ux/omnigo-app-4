@@ -644,6 +644,7 @@ func (h *OrderHandler) GetVendorMyOrders(c *gin.Context) {
 func (h *OrderHandler) RegisterRoutes(router *gin.Engine) {
 	orders := router.Group("/api/v1/orders", middleware.JWTAuth())
 	{
+		orders.POST("", h.CreateOrder)
 		orders.POST("/", h.CreateOrder)
 		orders.POST("/confirm", h.ConfirmOrder)
 		orders.POST("/handover", h.VendorHandoverOrder)

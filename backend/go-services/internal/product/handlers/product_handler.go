@@ -143,6 +143,9 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
+	if products == nil {
+		products = make([]*models.Product, 0)
+	}
 	c.JSON(http.StatusOK, products)
 }
 
